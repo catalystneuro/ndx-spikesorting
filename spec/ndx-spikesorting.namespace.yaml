@@ -1,0 +1,12 @@
+namespaces:
+- author:
+  - Alessio Buccino
+  - Heberto Mayorquin
+  contact:
+  - h.mayorquin@gmail.com
+  doc: An NWB extension for spike sorting outputs and extensions
+  name: ndx-spikesorting
+  schema:
+  - namespace: core
+  - source: ndx-spikesorting.extensions.yaml
+  version: 0.1.0
