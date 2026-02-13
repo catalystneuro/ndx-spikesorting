@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 from pynwb import NWBHDF5IO
@@ -10,8 +11,11 @@ from spikeinterface.core import ChannelSparsity, create_sorting_analyzer
 from spikeinterface.core.sortinganalyzer import get_extension_class
 from spikeinterface.extractors import NwbRecordingExtractor, NwbSortingExtractor
 
+if TYPE_CHECKING:
+    from spikeinterface.core import SortingAnalyzer
 
-def read_sorting_analyzer_from_nwb(nwbfile_path: str | Path) -> "SortingAnalyzer":
+
+def read_sorting_analyzer_from_nwb(nwbfile_path: str | Path) -> SortingAnalyzer:
     """Read an ndx-spikesorting NWB file and return a SortingAnalyzer.
 
     Opens the NWB file, extracts the SpikeSortingContainer from
@@ -141,7 +145,6 @@ def _load_random_spikes_extension_from_nwb(extensions, sorting, sorting_analyzer
 
     # -- Infer params from stored data --
     unit_ids = sorting_analyzer.unit_ids
-    num_units = len(unit_ids)
     per_unit_counts = np.diff(np.concatenate([[0], index_boundaries]))
 
     total_spike_counts = sorting.count_num_spikes_per_unit(outputs="array")

@@ -1,6 +1,5 @@
 from importlib.resources import files
 
-import numpy as np
 from pynwb import load_namespaces, get_class, register_class
 
 # Get path to the namespace.yaml file with the expected location when installed not in editable mode
@@ -41,10 +40,12 @@ class Templates(AutoTemplates):
 
         Returns
         -------
-        np.ndarray
+        numpy.ndarray
             Dense templates with shape ``(num_units, num_samples, num_channels)``,
             dtype float32.
         """
+        import numpy as np
+
         sparse_data = self.data.data[:]
         data_index = self.data_index.data[:]
         electrode_indices = self.electrodes.data[:]
@@ -73,5 +74,5 @@ __all__ = [
 ]
 
 # Remove these functions/modules from the package
-del load_namespaces, get_class, register_class, files, np
+del load_namespaces, get_class, register_class, files
 del __location_of_this_file, __spec_path, AutoTemplates
