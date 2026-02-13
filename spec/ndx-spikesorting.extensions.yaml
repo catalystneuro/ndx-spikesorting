@@ -20,6 +20,7 @@ groups:
     doc: Index into random_spikes_indices for each unit. The indices for unit i 
       are 
       random_spikes_indices[random_spikes_indices_index[i-1]:random_spikes_indices_index[i]].
+
 - neurodata_type_def: TemplatesData
   neurodata_type_inc: NWBDataInterface
   default_name: templates
@@ -58,14 +59,12 @@ groups:
     neurodata_type_inc: VectorIndex
     doc: Index into data for each unit. The templates for unit i are 
       data[data_index[i-1]:data_index[i], :].
-  - name: channel_ids
-    dtype: int32
-    dims:
-    - total_channels
-    shape:
-    - null
-    doc: Channel identifier for each row in data. Maps each waveform row to its 
-      corresponding channel/electrode index.
+  - name: electrodes
+    neurodata_type_inc: DynamicTableRegion
+    doc: Reference to the electrodes table rows for each row in data. Maps each
+      waveform row to its corresponding electrode. Use with data_index to determine
+      which electrodes belong to each unit's template.
+
 - neurodata_type_def: SpikeSortingExtensions
   neurodata_type_inc: NWBDataInterface
   default_name: extensions
@@ -78,6 +77,7 @@ groups:
   - neurodata_type_inc: TemplatesData
     doc: Templates extension data.
     quantity: '?'
+
 - neurodata_type_def: SpikeSortingContainer
   neurodata_type_inc: NWBDataInterface
   default_name: spike_sorting

@@ -127,7 +127,7 @@ templates_ext = sorting_analyzer.get_extension("templates")
 nbefore = templates_ext.nbefore
 
 all_data = []
-all_channel_ids = []
+all_electrode_indices = []
 cumulative_index = []
 
 for unit_id in unit_ids:
@@ -135,13 +135,13 @@ for unit_id in unit_ids:
 
     if sparsity is not None:
         channel_indices = sparsity.unit_id_to_channel_indices[unit_id]
-        sparse_template = template[:, channel_indices].T  # (num_active_channels, num_samples)
+        sparse_template = template[:,   ].T  # (num_active_channels, num_samples)
     else:
         channel_indices = np.arange(template.shape[1])
         sparse_template = template.T  # (num_channels, num_samples)
 
     all_data.append(sparse_template)
-    all_channel_ids.extend(channel_indices)
+    all_electrode_indices.extend(channel_indices)
     cumulative_index.append(len(np.vstack(all_data)))
 
 data = VectorData(
@@ -156,12 +156,23 @@ data_index = VectorIndex(
     target=data,
 )
 
+# Note: this DynamicTableRegion produces a harmless hdmf warning about not sharing
+# an ancestor with the electrodes table. This is expected because TemplatesData is
+# nested deep in the container tree while the electrodes table is at the NWBFile root.
+# The reference resolves correctly once written to disk.
+template_electrodes = DynamicTableRegion(
+    name="electrodes",
+    data=list(int(i) for i in all_electrode_indices),
+    description="Electrode for each row in data. Maps each waveform row to its corresponding electrode.",
+    table=nwbfile.electrodes,
+)
+
 nwb_templates = TemplatesData(
     name="templates",
     peak_sample_index=int(nbefore),
     data=data,
     data_index=data_index,
-    channel_ids=np.array(all_channel_ids, dtype=np.int32),
+    electrodes=template_electrodes,
 )
 
 # ---- Step 5: Assemble the SpikeSortingContainer and write to NWB ----

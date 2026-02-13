@@ -117,7 +117,7 @@ templates_nwb = extensions.templates_data
 if templates_nwb is not None:
     sparse_data = templates_nwb.data.data[:]  # (total_active_channels, num_samples)
     data_index = templates_nwb.data_index.data[:]
-    channel_ids_map = templates_nwb.channel_ids[:]
+    channel_ids_map = templates_nwb.electrodes.data[:]
     peak_sample_index = templates_nwb.peak_sample_index
 
     num_units = len(sorting_analyzer.unit_ids)
