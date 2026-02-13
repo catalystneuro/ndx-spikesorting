@@ -55,6 +55,7 @@ dev = [
     "pre-commit>=3.5.0",
     "ruff>=0.4.10",
     "spikeinterface>=0.103.2",
+    "spikeinterface-gui[desktop,web]>=0.12.0",
     {include-group = "docs"},
     {include-group = "test"},
 ]
@@ -96,6 +97,13 @@ exclude = [
     ".git*",
     "src/matnwb",
 ]
+
+[tool.uv]
+constraint-dependencies = ["numcodecs<0.16"]
+
+[tool.uv.sources]
+spikeinterface-gui = { path = "/home/heberto/development/work_repos/spikeinterface-gui", editable = true }
+spikeinterface = { path = "/home/heberto/development/work_repos/spikeinterface", editable = true }
 
 [tool.pytest.ini_options]
 # uncomment below to run pytest always with code coverage reporting. NOTE: breakpoints may not work
