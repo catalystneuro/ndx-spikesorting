@@ -26,6 +26,7 @@ from pynwb import NWBHDF5IO
 from spikeinterface.core import ChannelSparsity, create_sorting_analyzer
 from spikeinterface.core.sortinganalyzer import get_extension_class
 from spikeinterface.extractors import NwbRecordingExtractor, NwbSortingExtractor
+from spikeinterface_gui import run_mainwindow
 
 # ---- Step 1: Open the NWB file and extract the SpikeSortingContainer ----
 
@@ -148,8 +149,6 @@ if templates_nwb is not None:
 # ---- Step 7: Compute unit_locations and launch GUI ----
 
 sorting_analyzer.compute("unit_locations")
-
-from spikeinterface_gui import run_mainwindow
 
 run_mainwindow(sorting_analyzer, mode="desktop")
 
