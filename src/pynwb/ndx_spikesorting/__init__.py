@@ -12,15 +12,17 @@ if not __spec_path.exists():
 # Load the namespace
 load_namespaces(str(__spec_path))
 
-# TODO: Define your classes here to make them accessible at the package level.
-# Either have PyNWB generate a class from the spec using `get_class` as shown
-# below or write a custom class and register it using the class decorator
-# `@register_class("TetrodeSeries", "ndx-spikesorting")`
-TetrodeSeries = get_class("TetrodeSeries", "ndx-spikesorting")
+# Auto-generate classes from the spec
+RandomSpikes = get_class("RandomSpikes", "ndx-spikesorting")
+Templates = get_class("Templates", "ndx-spikesorting")
+SpikeSortingExtensions = get_class("SpikeSortingExtensions", "ndx-spikesorting")
+SpikeSortingContainer = get_class("SpikeSortingContainer", "ndx-spikesorting")
 
-# TODO: Add all classes to __all__ to make them accessible at the package level
 __all__ = [
-    "TetrodeSeries",
+    "RandomSpikes",
+    "Templates",
+    "SpikeSortingExtensions",
+    "SpikeSortingContainer",
 ]
 
 # Remove these functions/modules from the package
