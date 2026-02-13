@@ -19,10 +19,10 @@ from pynwb import NWBHDF5IO, NWBFile
 from spikeinterface.core import create_sorting_analyzer, generate_ground_truth_recording
 
 from ndx_spikesorting import (
-    RandomSpikesData,
+    RandomSpikes,
     SpikeSortingContainer,
     SpikeSortingExtensions,
-    TemplatesData,
+    Templates,
 )
 
 # ---- Step 1: Generate mock data and create a SortingAnalyzer ----
@@ -115,7 +115,7 @@ random_spikes_indices_index = VectorIndex(
     target=random_spikes_indices,
 )
 
-nwb_random_spikes = RandomSpikesData(
+nwb_random_spikes = RandomSpikes(
     name="random_spikes",
     random_spikes_indices=random_spikes_indices,
     random_spikes_indices_index=random_spikes_indices_index,
@@ -135,7 +135,7 @@ for unit_id in unit_ids:
 
     if sparsity is not None:
         channel_indices = sparsity.unit_id_to_channel_indices[unit_id]
-        sparse_template = template[:,   ].T  # (num_active_channels, num_samples)
+        sparse_template = template[:, channel_indices].T  # (num_active_channels, num_samples)
     else:
         channel_indices = np.arange(template.shape[1])
         sparse_template = template.T  # (num_channels, num_samples)
@@ -147,7 +147,7 @@ for unit_id in unit_ids:
 data = VectorData(
     name="data",
     data=np.vstack(all_data).astype(np.float32),
-    description="Sparse template waveforms",
+    description="Template waveforms",
 )
 
 data_index = VectorIndex(
@@ -157,17 +157,17 @@ data_index = VectorIndex(
 )
 
 # Note: this DynamicTableRegion produces a harmless hdmf warning about not sharing
-# an ancestor with the electrodes table. This is expected because TemplatesData is
+# an ancestor with the electrodes table. This is expected because Templates is
 # nested deep in the container tree while the electrodes table is at the NWBFile root.
 # The reference resolves correctly once written to disk.
 template_electrodes = DynamicTableRegion(
     name="electrodes",
     data=list(int(i) for i in all_electrode_indices),
-    description="Electrode for each row in data. Maps each waveform row to its corresponding electrode.",
+    description="Electrode for each waveform row.",
     table=nwbfile.electrodes,
 )
 
-nwb_templates = TemplatesData(
+nwb_templates = Templates(
     name="templates",
     peak_sample_index=int(nbefore),
     data=data,
@@ -180,8 +180,8 @@ nwb_templates = TemplatesData(
 sparsity_mask = sparsity.mask if sparsity is not None else None
 
 extensions = SpikeSortingExtensions(name="extensions")
-extensions.random_spikes_data = nwb_random_spikes
-extensions.templates_data = nwb_templates
+extensions.random_spikes = nwb_random_spikes
+extensions.templates = nwb_templates
 
 container = SpikeSortingContainer(
     name="spike_sorting",

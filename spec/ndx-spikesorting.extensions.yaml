@@ -1,5 +1,5 @@
 groups:
-- neurodata_type_def: RandomSpikesData
+- neurodata_type_def: RandomSpikes
   neurodata_type_inc: NWBDataInterface
   default_name: random_spikes
   doc: Random spike indices per unit for waveform extraction and template 
@@ -21,12 +21,12 @@ groups:
       are 
       random_spikes_indices[random_spikes_indices_index[i-1]:random_spikes_indices_index[i]].
 
-- neurodata_type_def: TemplatesData
+- neurodata_type_def: Templates
   neurodata_type_inc: NWBDataInterface
   default_name: templates
-  doc: Sparse template waveforms per unit. Templates are stored as a ragged 
-    array where each unit has waveforms only for its active channels (determined
-    by sparsity).
+  doc: Template waveforms per unit stored as a ragged array. Each row is one
+    channel's waveform for one unit. When sparsity is used, only active channels
+    are stored per unit. Without sparsity, all channels are stored for each unit.
   attributes:
   - name: peak_sample_index
     dtype: int32
@@ -34,36 +34,38 @@ groups:
       is the alignment point used during spike sorting, typically the point of maximum
       absolute amplitude. Combined with the number of samples from the data shape,
       this fully specifies the temporal structure: samples_before = peak_sample_index,
-      samples_after = n_samples - peak_sample_index - 1.'
+      samples_after = n_samples - peak_sample_index.'
   datasets:
   - name: data
     neurodata_type_inc: VectorData
     dtype: float32
     dims:
-    - total_channels
+    - num_waveforms
     - num_samples
     shape:
     - null
     - null
-    doc: Template waveforms stored sparsely. Shape is 
-      (total_active_channels_across_units, num_samples). Use data_index to 
-      retrieve templates for each unit, and channel_ids to identify which 
-      channel each waveform corresponds to.
+    doc: Template waveforms as a ragged array. Shape is
+      (total_waveforms, num_samples) where total_waveforms is the sum of
+      channels per unit across all units. Use data_index to retrieve
+      waveforms for each unit, and electrodes to identify which electrode
+      each row corresponds to.
     attributes:
     - name: unit
       dtype: text
-      default_value: volts
+      default_value: microvolts
       doc: Unit of measurement for template data.
       required: false
   - name: data_index
     neurodata_type_inc: VectorIndex
-    doc: Index into data for each unit. The templates for unit i are 
+    doc: Index into data for each unit. The templates for unit i are
       data[data_index[i-1]:data_index[i], :].
   - name: electrodes
     neurodata_type_inc: DynamicTableRegion
-    doc: Reference to the electrodes table rows for each row in data. Maps each
-      waveform row to its corresponding electrode. Use with data_index to determine
-      which electrodes belong to each unit's template.
+    doc: Reference to the electrodes table for each row in data. Has the
+      same length as the first dimension of data, so data_index indexes both
+      datasets in lockstep. The electrodes for unit i are
+      electrodes[data_index[i-1]:data_index[i]].
 
 - neurodata_type_def: SpikeSortingExtensions
   neurodata_type_inc: NWBDataInterface
@@ -71,10 +73,10 @@ groups:
   doc: Container for spike sorting computed extensions such as templates, random
     spikes, quality metrics, and other derived data.
   groups:
-  - neurodata_type_inc: RandomSpikesData
+  - neurodata_type_inc: RandomSpikes
     doc: Random spikes extension data.
     quantity: '?'
-  - neurodata_type_inc: TemplatesData
+  - neurodata_type_inc: Templates
     doc: Templates extension data.
     quantity: '?'
 

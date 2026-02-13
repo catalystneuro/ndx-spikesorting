@@ -13,14 +13,14 @@ if not __spec_path.exists():
 load_namespaces(str(__spec_path))
 
 # Auto-generate classes from the spec
-RandomSpikesData = get_class("RandomSpikesData", "ndx-spikesorting")
-TemplatesData = get_class("TemplatesData", "ndx-spikesorting")
+RandomSpikes = get_class("RandomSpikes", "ndx-spikesorting")
+Templates = get_class("Templates", "ndx-spikesorting")
 SpikeSortingExtensions = get_class("SpikeSortingExtensions", "ndx-spikesorting")
 SpikeSortingContainer = get_class("SpikeSortingContainer", "ndx-spikesorting")
 
 __all__ = [
-    "RandomSpikesData",
-    "TemplatesData",
+    "RandomSpikes",
+    "Templates",
     "SpikeSortingExtensions",
     "SpikeSortingContainer",
 ]

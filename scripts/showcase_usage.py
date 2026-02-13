@@ -77,7 +77,7 @@ extensions = container.spike_sorting_extensions
 num_channels = sorting_analyzer.get_num_channels()
 
 # Inject random_spikes
-random_spikes_nwb = extensions.random_spikes_data
+random_spikes_nwb = extensions.random_spikes
 if random_spikes_nwb is not None:
     indices_data = random_spikes_nwb.random_spikes_indices.data[:]
     index_boundaries = random_spikes_nwb.random_spikes_indices_index.data[:]
@@ -113,11 +113,11 @@ if random_spikes_nwb is not None:
     sorting_analyzer.extensions["random_spikes"] = ext
 
 # Inject templates
-templates_nwb = extensions.templates_data
+templates_nwb = extensions.templates
 if templates_nwb is not None:
-    sparse_data = templates_nwb.data.data[:]  # (total_active_channels, num_samples)
+    sparse_data = templates_nwb.data.data[:]  # (num_waveforms, num_samples)
     data_index = templates_nwb.data_index.data[:]
-    channel_ids_map = templates_nwb.electrodes.data[:]
+    electrode_indices = templates_nwb.electrodes.data[:]
     peak_sample_index = templates_nwb.peak_sample_index
 
     num_units = len(sorting_analyzer.unit_ids)
@@ -132,7 +132,7 @@ if templates_nwb is not None:
         start = 0 if unit_index == 0 else data_index[unit_index - 1]
         end = data_index[unit_index]
         unit_sparse = sparse_data[start:end, :]
-        active_channels = channel_ids_map[start:end]
+        active_channels = electrode_indices[start:end]
 
         for i, ch in enumerate(active_channels):
             dense_templates[unit_index, :, ch] = unit_sparse[i, :]
