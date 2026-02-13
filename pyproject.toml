@@ -102,10 +102,6 @@ exclude = [
 [tool.uv]
 constraint-dependencies = ["numcodecs<0.16"]
 
-[tool.uv.sources]
-spikeinterface-gui = { path = "/home/heberto/development/work_repos/spikeinterface-gui", editable = true }
-spikeinterface = { path = "/home/heberto/development/work_repos/spikeinterface", editable = true }
-neuroconv = { path = "/home/heberto/development/work_repos/neuroconv", editable = true }
 
 [tool.pytest.ini_options]
 # uncomment below to run pytest always with code coverage reporting. NOTE: breakpoints may not work
