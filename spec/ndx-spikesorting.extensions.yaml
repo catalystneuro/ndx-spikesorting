@@ -4,24 +4,6 @@ groups:
   default_name: random_spikes
   doc: Random spike indices per unit for waveform extraction and template 
     computation. Stores indices into each unit's spike train as a ragged array.
-  attributes:
-  - name: method
-    dtype: text
-    doc: "Method used to select random spikes: 'uniform' (randomly sampled with max
-      count) or 'all' (all spikes used)."
-  - name: max_spikes_per_unit
-    dtype: int32
-    doc: Maximum number of spikes to sample per unit. Only used when 
-      method='uniform'.
-    required: false
-  - name: margin_size
-    dtype: int32
-    doc: Number of samples at the border to exclude from spike selection.
-    required: false
-  - name: seed
-    dtype: int32
-    doc: Random seed used for reproducibility when method='uniform'.
-    required: false
   datasets:
   - name: random_spikes_indices
     neurodata_type_inc: VectorData
@@ -84,11 +66,11 @@ groups:
     - null
     doc: Channel identifier for each row in data. Maps each waveform row to its 
       corresponding channel/electrode index.
-- neurodata_type_def: SortingAnalyzerExtensions
+- neurodata_type_def: SpikeSortingExtensions
   neurodata_type_inc: NWBDataInterface
   default_name: extensions
-  doc: Container for SortingAnalyzer computed extensions such as templates, 
-    random spikes, quality metrics, and other derived data.
+  doc: Container for spike sorting computed extensions such as templates, random
+    spikes, quality metrics, and other derived data.
   groups:
   - neurodata_type_inc: RandomSpikesData
     doc: Random spikes extension data.
@@ -96,12 +78,11 @@ groups:
   - neurodata_type_inc: TemplatesData
     doc: Templates extension data.
     quantity: '?'
-- neurodata_type_def: SortingAnalyzerContainer
+- neurodata_type_def: SpikeSortingContainer
   neurodata_type_inc: NWBDataInterface
-  default_name: sorting_analyzer
-  doc: Container for SortingAnalyzer data from SpikeInterface. Contains metadata
-    about the sorting analysis, links to electrodes and units tables, and 
-    computed extension data.
+  default_name: spike_sorting
+  doc: Container for spike sorting results. Contains metadata about the sorting 
+    analysis, links to electrodes and units tables, and computed extension data.
   attributes:
   - name: sampling_frequency
     dtype: float64
@@ -129,7 +110,7 @@ groups:
     doc: Reference to the units table rows that correspond to the units in this 
       sorting analysis. Order matches the unit dimension in all data arrays.
   groups:
-  - neurodata_type_inc: SortingAnalyzerExtensions
+  - neurodata_type_inc: SpikeSortingExtensions
     doc: Container for computed extension data (templates, random spikes, etc.).
     quantity: '?'
   links:

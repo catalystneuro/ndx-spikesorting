@@ -12,8 +12,8 @@ from hdmf.common import VectorData, VectorIndex, DynamicTableRegion
 from ndx_spikesorting import (
     RandomSpikesData,
     TemplatesData,
-    SortingAnalyzerExtensions,
-    SortingAnalyzerContainer,
+    SpikeSortingExtensions,
+    SpikeSortingContainer,
 )
 
 
@@ -74,9 +74,6 @@ def create_mock_random_spikes_data(num_units: int = 3, spikes_per_unit: list = N
 
     random_spikes = RandomSpikesData(
         name="random_spikes",
-        method="uniform",
-        max_spikes_per_unit=500,
-        seed=42,
         random_spikes_indices=random_spikes_indices,
         random_spikes_indices_index=random_spikes_indices_index,
     )
@@ -138,34 +135,7 @@ class TestRandomSpikesDataConstructor(TestCase):
         random_spikes = create_mock_random_spikes_data()
 
         self.assertEqual(random_spikes.name, "random_spikes")
-        self.assertEqual(random_spikes.method, "uniform")
-        self.assertEqual(random_spikes.max_spikes_per_unit, 500)
-        self.assertEqual(random_spikes.seed, 42)
         self.assertEqual(len(random_spikes.random_spikes_indices.data), 33)  # 10 + 15 + 8
-
-    def test_constructor_all_method(self):
-        """Test RandomSpikesData with 'all' method."""
-        indices_data = np.arange(100, dtype=np.int64)
-        index_data = np.array([100], dtype=np.int64)
-
-        random_spikes_indices = VectorData(
-            name="random_spikes_indices",
-            data=indices_data,
-            description="All spike indices",
-        )
-
-        random_spikes = RandomSpikesData(
-            name="random_spikes",
-            method="all",
-            random_spikes_indices=random_spikes_indices,
-            random_spikes_indices_index=VectorIndex(
-                name="random_spikes_indices_index",
-                data=index_data,
-                target=random_spikes_indices,
-            ),
-        )
-
-        self.assertEqual(random_spikes.method, "all")
 
 
 class TestTemplatesDataConstructor(TestCase):
@@ -183,32 +153,32 @@ class TestTemplatesDataConstructor(TestCase):
         self.assertEqual(len(templates.channel_ids), 9)
 
 
-class TestSortingAnalyzerContainerConstructor(TestCase):
-    """Unit tests for SortingAnalyzerContainer constructor."""
+class TestSpikeSortingContainerConstructor(TestCase):
+    """Unit tests for SpikeSortingContainer constructor."""
 
     def setUp(self):
         self.nwbfile = set_up_nwbfile()
 
     def test_constructor_minimal(self):
-        """Test SortingAnalyzerContainer with minimal required fields."""
+        """Test SpikeSortingContainer with minimal required fields."""
         electrodes_region = self.nwbfile.create_electrode_table_region(
             region=list(range(10)),
             description="all electrodes",
         )
         units_region = create_units_region(self.nwbfile)
 
-        container = SortingAnalyzerContainer(
-            name="sorting_analyzer",
+        container = SpikeSortingContainer(
+            name="spike_sorting",
             sampling_frequency=30000.0,
             electrodes=electrodes_region,
             units_region=units_region,
         )
 
-        self.assertEqual(container.name, "sorting_analyzer")
+        self.assertEqual(container.name, "spike_sorting")
         self.assertEqual(container.sampling_frequency, 30000.0)
 
     def test_constructor_with_sparsity(self):
-        """Test SortingAnalyzerContainer with sparsity mask."""
+        """Test SpikeSortingContainer with sparsity mask."""
         electrodes_region = self.nwbfile.create_electrode_table_region(
             region=list(range(10)),
             description="all electrodes",
@@ -219,8 +189,8 @@ class TestSortingAnalyzerContainerConstructor(TestCase):
         num_channels = 10
         sparsity_mask = np.random.rand(num_units, num_channels) > 0.5
 
-        container = SortingAnalyzerContainer(
-            name="sorting_analyzer",
+        container = SpikeSortingContainer(
+            name="spike_sorting",
             sampling_frequency=30000.0,
             electrodes=electrodes_region,
             units_region=units_region,
@@ -251,17 +221,17 @@ class TestRandomSpikesDataRoundtrip(TestCase):
         random_spikes = create_mock_random_spikes_data()
 
         # Create extensions container
-        extensions = SortingAnalyzerExtensions(name="extensions")
+        extensions = SpikeSortingExtensions(name="extensions")
         extensions.random_spikes_data = random_spikes
 
         # Create main container
-        container = SortingAnalyzerContainer(
-            name="sorting_analyzer",
+        container = SpikeSortingContainer(
+            name="spike_sorting",
             sampling_frequency=30000.0,
             electrodes=electrodes_region,
             units_region=units_region,
         )
-        container.sorting_analyzer_extensions = extensions
+        container.spike_sorting_extensions = extensions
 
         # Add to processing module
         ecephys_module = self.nwbfile.create_processing_module(
@@ -275,13 +245,10 @@ class TestRandomSpikesDataRoundtrip(TestCase):
 
         with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
             read_nwbfile = io.read()
-            read_container = read_nwbfile.processing["ecephys"]["sorting_analyzer"]
-            read_extensions = read_container.sorting_analyzer_extensions
+            read_container = read_nwbfile.processing["ecephys"]["spike_sorting"]
+            read_extensions = read_container.spike_sorting_extensions
             read_random_spikes = read_extensions.random_spikes_data
 
-            self.assertEqual(read_random_spikes.method, "uniform")
-            self.assertEqual(read_random_spikes.max_spikes_per_unit, 500)
-            self.assertEqual(read_random_spikes.seed, 42)
             np.testing.assert_array_equal(
                 read_random_spikes.random_spikes_indices.data[:],
                 random_spikes.random_spikes_indices.data[:],
@@ -309,17 +276,17 @@ class TestTemplatesDataRoundtrip(TestCase):
         templates = create_mock_templates_data()
 
         # Create extensions container
-        extensions = SortingAnalyzerExtensions(name="extensions")
+        extensions = SpikeSortingExtensions(name="extensions")
         extensions.templates_data = templates
 
         # Create main container
-        container = SortingAnalyzerContainer(
-            name="sorting_analyzer",
+        container = SpikeSortingContainer(
+            name="spike_sorting",
             sampling_frequency=30000.0,
             electrodes=electrodes_region,
             units_region=units_region,
         )
-        container.sorting_analyzer_extensions = extensions
+        container.spike_sorting_extensions = extensions
 
         ecephys_module = self.nwbfile.create_processing_module(
             name="ecephys",
@@ -332,8 +299,8 @@ class TestTemplatesDataRoundtrip(TestCase):
 
         with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
             read_nwbfile = io.read()
-            read_container = read_nwbfile.processing["ecephys"]["sorting_analyzer"]
-            read_extensions = read_container.sorting_analyzer_extensions
+            read_container = read_nwbfile.processing["ecephys"]["spike_sorting"]
+            read_extensions = read_container.spike_sorting_extensions
             read_templates = read_extensions.templates_data
 
             self.assertEqual(read_templates.peak_sample_index, 20)
@@ -347,18 +314,18 @@ class TestTemplatesDataRoundtrip(TestCase):
             )
 
 
-class TestSortingAnalyzerContainerRoundtrip(TestCase):
-    """Full roundtrip test for SortingAnalyzerContainer with all components."""
+class TestSpikeSortingContainerRoundtrip(TestCase):
+    """Full roundtrip test for SpikeSortingContainer with all components."""
 
     def setUp(self):
         self.nwbfile = set_up_nwbfile()
-        self.path = "test_sorting_analyzer.nwb"
+        self.path = "test_spike_sorting.nwb"
 
     def tearDown(self):
         remove_test_file(self.path)
 
     def test_roundtrip_full(self):
-        """Test writing and reading SortingAnalyzerContainer with all extensions."""
+        """Test writing and reading SpikeSortingContainer with all extensions."""
         electrodes_region = self.nwbfile.create_electrode_table_region(
             region=list(range(10)),
             description="all electrodes",
@@ -377,19 +344,19 @@ class TestSortingAnalyzerContainerRoundtrip(TestCase):
         sparsity_mask[2, [2, 3]] = True
 
         # Create extensions container with both extensions
-        extensions = SortingAnalyzerExtensions(name="extensions")
+        extensions = SpikeSortingExtensions(name="extensions")
         extensions.random_spikes_data = random_spikes
         extensions.templates_data = templates
 
         # Create main container with sparsity and extensions
-        container = SortingAnalyzerContainer(
-            name="sorting_analyzer",
+        container = SpikeSortingContainer(
+            name="spike_sorting",
             sampling_frequency=30000.0,
             electrodes=electrodes_region,
             units_region=units_region,
             sparsity_mask=sparsity_mask,
         )
-        container.sorting_analyzer_extensions = extensions
+        container.spike_sorting_extensions = extensions
 
         ecephys_module = self.nwbfile.create_processing_module(
             name="ecephys",
@@ -402,7 +369,7 @@ class TestSortingAnalyzerContainerRoundtrip(TestCase):
 
         with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
             read_nwbfile = io.read()
-            read_container = read_nwbfile.processing["ecephys"]["sorting_analyzer"]
+            read_container = read_nwbfile.processing["ecephys"]["spike_sorting"]
 
             # Verify main container
             self.assertEqual(read_container.sampling_frequency, 30000.0)
@@ -412,23 +379,22 @@ class TestSortingAnalyzerContainerRoundtrip(TestCase):
             self.assertEqual(len(read_container.units_region.data[:]), 3)
 
             # Verify extensions container
-            read_extensions = read_container.sorting_analyzer_extensions
+            read_extensions = read_container.spike_sorting_extensions
 
             # Verify random spikes
             read_random_spikes = read_extensions.random_spikes_data
-            self.assertEqual(read_random_spikes.method, "uniform")
-            self.assertEqual(read_random_spikes.max_spikes_per_unit, 500)
+            self.assertIsNotNone(read_random_spikes)
 
             # Verify templates
             read_templates = read_extensions.templates_data
             self.assertEqual(read_templates.peak_sample_index, 20)
 
 
-class TestSortingAnalyzerContainerRoundtripPyNWB(NWBH5IOFlexMixin, TestCase):
+class TestSpikeSortingContainerRoundtripPyNWB(NWBH5IOFlexMixin, TestCase):
     """Complex roundtrip test using pynwb.testing infrastructure."""
 
     def getContainerType(self):
-        return "SortingAnalyzerContainer"
+        return "SpikeSortingContainer"
 
     def addContainer(self):
         set_up_nwbfile(self.nwbfile)
@@ -439,8 +405,8 @@ class TestSortingAnalyzerContainerRoundtripPyNWB(NWBH5IOFlexMixin, TestCase):
         )
         units_region = create_units_region(self.nwbfile)
 
-        container = SortingAnalyzerContainer(
-            name="sorting_analyzer",
+        container = SpikeSortingContainer(
+            name="spike_sorting",
             sampling_frequency=30000.0,
             electrodes=electrodes_region,
             units_region=units_region,
@@ -453,4 +419,4 @@ class TestSortingAnalyzerContainerRoundtripPyNWB(NWBH5IOFlexMixin, TestCase):
         ecephys_module.add(container)
 
     def getContainer(self, nwbfile: NWBFile):
-        return nwbfile.processing["ecephys"]["sorting_analyzer"]
+        return nwbfile.processing["ecephys"]["spike_sorting"]

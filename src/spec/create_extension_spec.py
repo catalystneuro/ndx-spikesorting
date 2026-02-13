@@ -36,31 +36,6 @@ def main():
             "Random spike indices per unit for waveform extraction and template computation. "
             "Stores indices into each unit's spike train as a ragged array."
         ),
-        attributes=[
-            NWBAttributeSpec(
-                name="method",
-                dtype="text",
-                doc="Method used to select random spikes: 'uniform' (randomly sampled with max count) or 'all' (all spikes used).",
-            ),
-            NWBAttributeSpec(
-                name="max_spikes_per_unit",
-                dtype="int32",
-                required=False,
-                doc="Maximum number of spikes to sample per unit. Only used when method='uniform'.",
-            ),
-            NWBAttributeSpec(
-                name="margin_size",
-                dtype="int32",
-                required=False,
-                doc="Number of samples at the border to exclude from spike selection.",
-            ),
-            NWBAttributeSpec(
-                name="seed",
-                dtype="int32",
-                required=False,
-                doc="Random seed used for reproducibility when method='uniform'.",
-            ),
-        ],
         datasets=[
             NWBDatasetSpec(
                 name="random_spikes_indices",
@@ -149,13 +124,13 @@ def main():
         ],
     )
 
-    # SortingAnalyzerExtensions: container group for all computed extensions
-    sorting_analyzer_extensions = NWBGroupSpec(
-        neurodata_type_def="SortingAnalyzerExtensions",
+    # SpikeSortingExtensions: container group for all computed extensions
+    spike_sorting_extensions = NWBGroupSpec(
+        neurodata_type_def="SpikeSortingExtensions",
         neurodata_type_inc="NWBDataInterface",
         default_name="extensions",
         doc=(
-            "Container for SortingAnalyzer computed extensions such as templates, "
+            "Container for spike sorting computed extensions such as templates, "
             "random spikes, quality metrics, and other derived data."
         ),
         groups=[
@@ -172,13 +147,13 @@ def main():
         ],
     )
 
-    # SortingAnalyzerContainer: main container for SortingAnalyzer data
-    sorting_analyzer_container = NWBGroupSpec(
-        neurodata_type_def="SortingAnalyzerContainer",
+    # SpikeSortingContainer: main container for spike sorting data
+    spike_sorting_container = NWBGroupSpec(
+        neurodata_type_def="SpikeSortingContainer",
         neurodata_type_inc="NWBDataInterface",
-        default_name="sorting_analyzer",
+        default_name="spike_sorting",
         doc=(
-            "Container for SortingAnalyzer data from SpikeInterface. Contains metadata about "
+            "Container for spike sorting results. Contains metadata about "
             "the sorting analysis, links to electrodes and units tables, and computed extension data."
         ),
         attributes=[
@@ -230,7 +205,7 @@ def main():
         ],
         groups=[
             NWBGroupSpec(
-                neurodata_type_inc="SortingAnalyzerExtensions",
+                neurodata_type_inc="SpikeSortingExtensions",
                 quantity="?",
                 doc="Container for computed extension data (templates, random spikes, etc.).",
             ),
@@ -238,7 +213,7 @@ def main():
     )
 
     # Add all new data types
-    new_data_types = [random_spikes_data, templates_data, sorting_analyzer_extensions, sorting_analyzer_container]
+    new_data_types = [random_spikes_data, templates_data, spike_sorting_extensions, spike_sorting_container]
 
     # export the spec to yaml files in the root spec folder
     output_dir = str((Path(__file__).parent.parent.parent / "spec").absolute())

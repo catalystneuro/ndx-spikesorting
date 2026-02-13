@@ -15,14 +15,14 @@ load_namespaces(str(__spec_path))
 # Auto-generate classes from the spec
 RandomSpikesData = get_class("RandomSpikesData", "ndx-spikesorting")
 TemplatesData = get_class("TemplatesData", "ndx-spikesorting")
-SortingAnalyzerExtensions = get_class("SortingAnalyzerExtensions", "ndx-spikesorting")
-SortingAnalyzerContainer = get_class("SortingAnalyzerContainer", "ndx-spikesorting")
+SpikeSortingExtensions = get_class("SpikeSortingExtensions", "ndx-spikesorting")
+SpikeSortingContainer = get_class("SpikeSortingContainer", "ndx-spikesorting")
 
 __all__ = [
     "RandomSpikesData",
     "TemplatesData",
-    "SortingAnalyzerExtensions",
-    "SortingAnalyzerContainer",
+    "SpikeSortingExtensions",
+    "SpikeSortingContainer",
 ]
 
 # Remove these functions/modules from the package
