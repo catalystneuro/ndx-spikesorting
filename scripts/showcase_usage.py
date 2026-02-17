@@ -72,12 +72,12 @@ sorting_analyzer = create_sorting_analyzer(
     sparsity=sparsity,
 )
 
-# ---- Step 6: Inject precomputed extensions from NWB ----
+# ---- Step 6: Instantiate precomputed extensions from NWB ----
 
 extensions = container.spike_sorting_extensions
 num_channels = sorting_analyzer.get_num_channels()
 
-# Inject random_spikes
+# Instantiate random_spikes
 random_spikes_nwb = extensions.random_spikes
 if random_spikes_nwb is not None:
     indices_data = random_spikes_nwb.random_spikes_indices.data[:]
@@ -113,7 +113,7 @@ if random_spikes_nwb is not None:
     ext.run_info = {"run_completed": True, "runtime_s": 0.0}
     sorting_analyzer.extensions["random_spikes"] = ext
 
-# Inject templates
+# Instantiate templates
 templates_nwb = extensions.templates
 if templates_nwb is not None:
     sparse_data = templates_nwb.data.data[:]  # (num_waveforms, num_samples)
@@ -146,7 +146,18 @@ if templates_nwb is not None:
     ext.run_info = {"run_completed": True, "runtime_s": 0.0}
     sorting_analyzer.extensions["templates"] = ext
 
-# ---- Step 7: Compute unit_locations and launch GUI ----
+# Instantiate unit_locations
+unit_locations_nwb = extensions.unit_locations
+if unit_locations_nwb is not None:
+    locations_data = unit_locations_nwb.locations.data[:]  # (num_units, 3)
+    ext_class = get_extension_class("unit_locations")
+    ext = ext_class(sorting_analyzer)
+    ext.set_params({"method": "monopolar_triangulation"})
+    ext.data["locations"] = locations_data
+    ext.run_info = {"run_completed": True, "runtime_s": 0.0}
+    sorting_analyzer.extensions["unit_locations"] = ext
+
+# ---- Step 8: launch GUI ----
 
 sorting_analyzer.compute("unit_locations")
 

@@ -15,12 +15,14 @@ load_namespaces(str(__spec_path))
 # Auto-generate classes from the spec
 RandomSpikes = get_class("RandomSpikes", "ndx-spikesorting")
 Templates = get_class("Templates", "ndx-spikesorting")
+UnitLocations = get_class("UnitLocations", "ndx-spikesorting")
 SpikeSortingExtensions = get_class("SpikeSortingExtensions", "ndx-spikesorting")
 SpikeSortingContainer = get_class("SpikeSortingContainer", "ndx-spikesorting")
 
 __all__ = [
     "RandomSpikes",
     "Templates",
+    "UnitLocations",
     "SpikeSortingExtensions",
     "SpikeSortingContainer",
 ]
