@@ -12,6 +12,7 @@ from hdmf.common import VectorData, VectorIndex, DynamicTableRegion
 from ndx_spikesorting import (
     RandomSpikes,
     Templates,
+    NoiseLevels,
     SpikeSortingExtensions,
     SpikeSortingContainer,
 )
@@ -77,6 +78,19 @@ def create_mock_random_spikes(num_units: int = 3, spikes_per_unit: list = None):
     )
     return random_spikes
 
+def create_mock_noise_levels(num_channels: int = 120):
+    """Create mock NoiseLevels with random noise values."""
+    noise_levels_data = VectorData(
+        name="data",
+        data=np.random.rand(num_channels).astype(np.float32),
+        description="Random noise levels for all channels",
+    )
+
+    noise_levels = NoiseLevels(
+        name="noise_levels",
+        data=noise_levels_data,
+    )
+    return noise_levels
 
 def create_mock_templates(nwbfile: NWBFile, num_units: int = 3, num_samples: int = 60, channels_per_unit: list = None):
     """Create mock Templates with sparse templates and electrode references."""
@@ -136,6 +150,15 @@ class TestRandomSpikesConstructor(TestCase):
         self.assertEqual(random_spikes.name, "random_spikes")
         self.assertEqual(len(random_spikes.random_spikes_indices.data), 33)  # 10 + 15 + 8
 
+class TestNoiseLevelsConstructor(TestCase):
+    """Unit tests for NoiseLevels constructor."""
+
+    def test_constructor(self):
+        """Test that NoiseLevels constructor sets values correctly."""
+        noise_levels = create_mock_noise_levels()
+
+        self.assertEqual(noise_levels.name, "noise_levels")
+        self.assertEqual(noise_levels.data.shape[0], 120)
 
 class TestTemplatesConstructor(TestCase):
     """Unit tests for Templates constructor."""
@@ -251,6 +274,56 @@ class TestRandomSpikesRoundtrip(TestCase):
                 random_spikes.random_spikes_indices.data[:],
             )
 
+class TestNoiseLevelsRoundtrip(TestCase):
+    """Roundtrip test for NoiseLevels."""
+
+    def setUp(self):
+        self.nwbfile = set_up_nwbfile()
+        self.path = "test_noise_levels.nwb"
+
+    def tearDown(self):
+        remove_test_file(self.path)
+
+    def test_roundtrip(self):
+        """Test writing and reading NoiseLevels."""
+        electrodes_region = self.nwbfile.create_electrode_table_region(
+            region=list(range(10)),
+            description="all electrodes",
+        )
+        units_region = create_units_region(self.nwbfile)
+
+        noise_levels = create_mock_noise_levels()
+
+        extensions = SpikeSortingExtensions(name="extensions")
+        extensions.noise_levels = noise_levels
+
+        container = SpikeSortingContainer(
+            name="spike_sorting",
+            sampling_frequency=30000.0,
+            electrodes=electrodes_region,
+            units_region=units_region,
+        )
+        container.spike_sorting_extensions = extensions
+
+        ecephys_module = self.nwbfile.create_processing_module(
+            name="ecephys",
+            description="Extracellular electrophysiology processing",
+        )
+        ecephys_module.add(container)
+
+        with NWBHDF5IO(self.path, mode="w") as io:
+            io.write(self.nwbfile)
+
+        with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
+            read_nwbfile = io.read()
+            read_container = read_nwbfile.processing["ecephys"]["spike_sorting"]
+            read_extensions = read_container.spike_sorting_extensions
+            read_noise_levels = read_extensions.noise_levels
+
+            np.testing.assert_array_equal(
+                read_noise_levels.data[:],
+                noise_levels.data[:],
+            )
 
 class TestTemplatesRoundtrip(TestCase):
     """Roundtrip test for Templates."""
@@ -328,6 +401,7 @@ class TestSpikeSortingContainerRoundtrip(TestCase):
         units_region = create_units_region(self.nwbfile)
 
         random_spikes = create_mock_random_spikes()
+        noise_levels = create_mock_noise_levels()
         templates = create_mock_templates(self.nwbfile)
 
         num_units = 3
@@ -340,7 +414,7 @@ class TestSpikeSortingContainerRoundtrip(TestCase):
         extensions = SpikeSortingExtensions(name="extensions")
         extensions.random_spikes = random_spikes
         extensions.templates = templates
-
+        extensions.noise_levels = noise_levels
         container = SpikeSortingContainer(
             name="spike_sorting",
             sampling_frequency=30000.0,
@@ -375,6 +449,9 @@ class TestSpikeSortingContainerRoundtrip(TestCase):
 
             read_templates = read_extensions.templates
             self.assertEqual(read_templates.peak_sample_index, 20)
+
+            read_noise_levels = read_extensions.noise_levels
+            self.assertIsNotNone(read_noise_levels)
 
 
 class TestSpikeSortingContainerRoundtripPyNWB(NWBH5IOFlexMixin, TestCase):
