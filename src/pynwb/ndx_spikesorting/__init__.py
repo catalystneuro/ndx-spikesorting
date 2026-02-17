@@ -1,5 +1,6 @@
 from importlib.resources import files
-from pynwb import load_namespaces, get_class
+
+from pynwb import load_namespaces, get_class, register_class
 
 # Get path to the namespace.yaml file with the expected location when installed not in editable mode
 __location_of_this_file = files(__name__)
@@ -18,12 +19,16 @@ Templates = get_class("Templates", "ndx-spikesorting")
 SpikeSortingExtensions = get_class("SpikeSortingExtensions", "ndx-spikesorting")
 SpikeSortingContainer = get_class("SpikeSortingContainer", "ndx-spikesorting")
 
+from .utils import templates_to_dense
+
 __all__ = [
     "RandomSpikes",
     "Templates",
     "SpikeSortingExtensions",
     "SpikeSortingContainer",
+    "templates_to_dense",
 ]
 
 # Remove these functions/modules from the package
-del load_namespaces, get_class, files, __location_of_this_file, __spec_path
+del load_namespaces, get_class, register_class, files
+del __location_of_this_file, __spec_path
