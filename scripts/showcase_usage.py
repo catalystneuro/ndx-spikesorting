@@ -24,5 +24,3 @@ sorting_analyzer = read_sorting_analyzer_from_nwb(nwb_path)
 sorting_analyzer.compute("unit_locations")
 
 run_mainwindow(sorting_analyzer, mode="desktop")
-
-sorting_analyzer._nwb_io.close()

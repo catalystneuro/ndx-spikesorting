@@ -20,11 +20,7 @@ def read_sorting_analyzer_from_nwb(nwbfile_path: str | Path) -> SortingAnalyzer:
 
     Opens the NWB file, extracts the SpikeSortingContainer from
     ``processing["ecephys"]["spike_sorting"]``, reconstructs sorting/recording
-    objects, and injects any precomputed extensions (random_spikes, templates).
-
-    The returned SortingAnalyzer keeps a reference to the open IO handle at
-    ``sorting_analyzer._nwb_io``.  The caller is responsible for closing it
-    when done (``sorting_analyzer._nwb_io.close()``).
+    objects, and instantiates any precomputed extensions (random_spikes, templates).
 
     Parameters
     ----------
@@ -34,7 +30,7 @@ def read_sorting_analyzer_from_nwb(nwbfile_path: str | Path) -> SortingAnalyzer:
     Returns
     -------
     SortingAnalyzer
-        In-memory SortingAnalyzer with precomputed extensions injected.
+        In-memory SortingAnalyzer with precomputed extensions instantiated.
     """
     nwbfile_path = Path(nwbfile_path)
 
@@ -78,20 +74,17 @@ def read_sorting_analyzer_from_nwb(nwbfile_path: str | Path) -> SortingAnalyzer:
         sparsity=sparsity,
     )
 
-    # -- Inject precomputed extensions --
+    # -- Instantiate precomputed extensions --
     extensions = container.spike_sorting_extensions
     if extensions is not None:
         _load_random_spikes_extension_from_nwb(extensions, sorting, sorting_analyzer)
         _load_templates_extension_from_nwb(extensions, sorting_analyzer, sampling_frequency)
 
-    # Keep the IO handle alive so extractors can still read data
-    sorting_analyzer._nwb_io = io
-
     return sorting_analyzer
 
 
 def _load_random_spikes_extension_from_nwb(extensions, sorting, sorting_analyzer):
-    """Inject the random_spikes extension if present in the NWB container.
+    """Instantiate the random_spikes extension if present in the NWB container.
 
     This requires converting between two different index representations:
 
@@ -122,7 +115,7 @@ def _load_random_spikes_extension_from_nwb(extensions, sorting, sorting_analyzer
     spike train::
 
         random_spikes_indices:  [2,  5,  8,  |  1,  4,  12,  |  0,  3  ]
-                                 \_________/     \__________/     \____/
+                                 \\_________/     \\__________/     \\____/
                                    unit 0          unit 1         unit 2
                                   [0:3]           [3:6]           [6:8]
                                     ^               ^               ^
@@ -136,6 +129,8 @@ def _load_random_spikes_extension_from_nwb(extensions, sorting, sorting_analyzer
     The conversion maps each per-unit local index back to the global spike
     vector by matching sample times.
     """
+    from spikeinterface.core.sorting_tools import spike_vector_to_indices
+
     random_spikes_nwb = extensions.random_spikes
     if random_spikes_nwb is None:
         return
@@ -155,43 +150,32 @@ def _load_random_spikes_extension_from_nwb(extensions, sorting, sorting_analyzer
     max_spikes_per_unit = int(per_unit_counts.max())
 
     # -- Convert per-unit spike train indices to global spike vector indices --
-    spike_vector = sorting.to_spike_vector()
+    spike_vector = sorting.to_spike_vector(concatenated=False)
+    spike_indices_by_unit_and_segments = spike_vector_to_indices(spike_vector, unit_ids, absolute_index=True)
+    # TODO: deal with multi-segment case if it arises in the future. For now we assume single segment
+    segment_index = 0
+    spike_indices_by_unit = spike_indices_by_unit_and_segments[segment_index]
+    
     global_indices = []
 
     for unit_index, unit_id in enumerate(unit_ids):
         start = 0 if unit_index == 0 else index_boundaries[unit_index - 1]
         end = index_boundaries[unit_index]
         unit_spike_train_indices = indices_data[start:end]
-
-        spike_train = sorting.get_unit_spike_train(unit_id=unit_id)
-        selected_samples = spike_train[unit_spike_train_indices]
-
-        unit_mask = spike_vector["unit_index"] == unit_index
-        unit_global_indices = np.where(unit_mask)[0]
-        unit_samples_in_vector = spike_vector["sample_index"][unit_global_indices]
-
-        for sample in selected_samples:
-            match = np.where(unit_samples_in_vector == sample)[0]
-            if len(match) > 0:
-                global_indices.append(unit_global_indices[match[0]])
+        global_indices.extend(spike_indices_by_unit[unit_id][unit_spike_train_indices])
 
     random_spikes_indices = np.array(sorted(global_indices), dtype=np.int64)
 
     ext_class = get_extension_class("random_spikes")
     ext = ext_class(sorting_analyzer)
-    ext.params = {
-        "method": method,
-        "max_spikes_per_unit": max_spikes_per_unit,
-        "margin_size": None,
-        "seed": None,
-    }
+    ext.set_params(method=method, max_spikes_per_unit=max_spikes_per_unit)
     ext.data["random_spikes_indices"] = random_spikes_indices
     ext.run_info = {"run_completed": True, "runtime_s": 0.0}
     sorting_analyzer.extensions["random_spikes"] = ext
 
 
 def _load_templates_extension_from_nwb(extensions, sorting_analyzer, sampling_frequency):
-    """Inject the templates extension if present in the NWB container.
+    """Instantiate the templates extension if present in the NWB container.
 
     This requires converting between two different template representations:
 
@@ -225,6 +209,7 @@ def _load_templates_extension_from_nwb(extensions, sorting_analyzer, sampling_fr
     The conversion scatters each sparse row into the correct channel position
     of the dense array.
     """
+    from ndx_spikesorting import templates_to_dense
     templates_nwb = extensions.templates
     if templates_nwb is None:
         return
@@ -238,15 +223,11 @@ def _load_templates_extension_from_nwb(extensions, sorting_analyzer, sampling_fr
     ms_after = (num_samples - peak_sample_index) / sampling_frequency * 1000.0
 
     # Reconstruct dense templates from sparse ragged arrays
-    dense_templates = templates_nwb.to_dense(num_channels)
+    dense_templates = templates_to_dense(templates_nwb, num_channels)
 
     ext_class = get_extension_class("templates")
     ext = ext_class(sorting_analyzer)
-    ext.params = {
-        "ms_before": float(ms_before),
-        "ms_after": float(ms_after),
-        "operators": ["average", "std"],
-    }
+    ext.set_params(ms_before=float(ms_before), ms_after=float(ms_after), operators=["average", "std"])
     ext.data["average"] = dense_templates
     ext.data["std"] = np.zeros_like(dense_templates)
     ext.run_info = {"run_completed": True, "runtime_s": 0.0}
