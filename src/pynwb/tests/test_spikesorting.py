@@ -4,7 +4,7 @@ import numpy as np
 
 from pynwb import NWBHDF5IO, NWBFile
 from pynwb.testing.mock.device import mock_Device
-from pynwb.testing.mock.ecephys import mock_ElectrodeGroup, mock_ElectrodeTable
+from pynwb.testing.mock.ecephys import mock_ElectrodeGroup, mock_ElectrodesTable
 from pynwb.testing.mock.file import mock_NWBFile
 from pynwb.testing import TestCase, remove_test_file, NWBH5IOFlexMixin
 from hdmf.common import VectorData, VectorIndex, DynamicTableRegion
@@ -22,7 +22,7 @@ def set_up_nwbfile(nwbfile: NWBFile = None, n_electrodes: int = 10, n_units: int
     nwbfile = nwbfile or mock_NWBFile()
     device = mock_Device(nwbfile=nwbfile)
     electrode_group = mock_ElectrodeGroup(device=device, nwbfile=nwbfile)
-    _ = mock_ElectrodeTable(n_rows=n_electrodes, group=electrode_group, nwbfile=nwbfile)
+    _ = mock_ElectrodesTable(n_rows=n_electrodes, group=electrode_group, nwbfile=nwbfile)
 
     # Add units with mock spike times
     for i in range(n_units):
