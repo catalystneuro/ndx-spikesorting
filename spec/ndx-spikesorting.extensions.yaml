@@ -69,7 +69,7 @@ groups:
 
 - neurodata_type_def: UnitLocations
   neurodata_type_inc: NWBDataInterface
-  default_name: random_spikes
+  default_name: unit_locations
   doc: Estimated locations for each unit in x-y and optionally z dimensions.
   datasets:
   - name: locations
