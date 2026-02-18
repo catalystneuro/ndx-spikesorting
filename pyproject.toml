@@ -128,7 +128,7 @@ exclude = ".git|.mypy_cache|.tox|.venv|venv|.ipynb_checkpoints|_build/|dist/|__p
 [tool.ruff]
 lint.select = ["E", "F", "T100", "T201", "T203", "C901"]
 exclude = [
-  "docs/source/conf.py",
+  "docs/source/conf.py", "src/pynwb/ndx_spikesorting/__init__.py"
 ]
 line-length = 120
 
