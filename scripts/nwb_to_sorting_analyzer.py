@@ -79,6 +79,7 @@ def read_sorting_analyzer_from_nwb(nwbfile_path: str | Path) -> SortingAnalyzer:
     if extensions is not None:
         _load_random_spikes_extension_from_nwb(extensions, sorting, sorting_analyzer)
         _load_templates_extension_from_nwb(extensions, sorting_analyzer, sampling_frequency)
+        _load_unit_locations_extension_from_nwb(extensions, sorting_analyzer)
 
     return sorting_analyzer
 
@@ -232,3 +233,25 @@ def _load_templates_extension_from_nwb(extensions, sorting_analyzer, sampling_fr
     ext.data["std"] = np.zeros_like(dense_templates)
     ext.run_info = {"run_completed": True, "runtime_s": 0.0}
     sorting_analyzer.extensions["templates"] = ext
+
+
+def _load_unit_locations_extension_from_nwb(extensions, sorting_analyzer):
+    """Instantiate the unit_locations extension if present in the NWB container.
+
+    The NWB extension stores a simple dense array of unit locations with shape
+    (num_units, 3) for (x, y, z) coordinates. This maps directly to the
+    expected format for the UnitLocations extension in SpikeInterface, so no
+    complex conversion is needed. Each row corresponds to a unit in the same order as sorting_analyzer.unit_ids.
+
+    """
+    unit_locations_nwb = extensions.unit_locations
+    if unit_locations_nwb is None:
+        return
+
+    locations_data = unit_locations_nwb.locations.data[:]
+
+    ext_class = get_extension_class("unit_locations")
+    ext = ext_class(sorting_analyzer)
+    ext.data["locations"] = locations_data.astype(np.float32)
+    ext.run_info = {"run_completed": True, "runtime_s": 0.0}
+    sorting_analyzer.extensions["unit_locations"] = ext
