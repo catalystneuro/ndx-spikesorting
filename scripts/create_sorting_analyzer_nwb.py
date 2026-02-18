@@ -29,7 +29,7 @@ from ndx_spikesorting import (
 # ---- Step 1: Generate mock data and create a SortingAnalyzer ----
 
 recording, sorting = generate_ground_truth_recording(
-    durations=[2.0],
+    durations=[5.0],
     num_units=5,
     num_channels=10,
     seed=42,
@@ -44,7 +44,7 @@ sorting_analyzer = create_sorting_analyzer(
 
 sorting_analyzer.compute(
     {
-        "random_spikes": {"max_spikes_per_unit": 100, "seed": 42},
+        "random_spikes": {"max_spikes_per_unit": 10, "seed": 42},
         "templates": {},
         "unit_locations": {"method": "monopolar_triangulation"},
     }
