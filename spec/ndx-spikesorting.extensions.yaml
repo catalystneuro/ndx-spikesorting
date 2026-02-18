@@ -87,6 +87,27 @@ groups:
       doc: Unit of measurement for noise data.
       required: false
 
+- neurodata_type_def: UnitLocations
+  neurodata_type_inc: NWBDataInterface
+  default_name: unit_locations
+  doc: Estimated locations for each unit in x-y and optionally z dimensions.
+  datasets:
+  - name: locations
+    neurodata_type_inc: VectorData
+    dtype: float
+    dims:
+    - - num_units
+      - x, y
+    - - num_units
+      - x, y, z
+    shape:
+    - - null
+      - 2
+    - - null
+      - 3
+    doc: Locations of units. Shape is (num_units, 2) for 2D locations (x-y) or 
+      (num_units, 3) for 3D locations (x-y-z).
+
 - neurodata_type_def: SpikeSortingExtensions
   neurodata_type_inc: NWBDataInterface
   default_name: extensions
@@ -101,6 +122,9 @@ groups:
     quantity: '?'
   - neurodata_type_inc: NoiseLevels
     doc: Noise levels extension data.
+    quantity: '?'
+  - neurodata_type_inc: UnitLocations
+    doc: Unit locations extension data.
     quantity: '?'
 
 - neurodata_type_def: SpikeSortingContainer

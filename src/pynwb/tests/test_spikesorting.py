@@ -4,7 +4,7 @@ import numpy as np
 
 from pynwb import NWBHDF5IO, NWBFile
 from pynwb.testing.mock.device import mock_Device
-from pynwb.testing.mock.ecephys import mock_ElectrodeGroup, mock_ElectrodeTable
+from pynwb.testing.mock.ecephys import mock_ElectrodeGroup, mock_ElectrodesTable
 from pynwb.testing.mock.file import mock_NWBFile
 from pynwb.testing import TestCase, remove_test_file, NWBH5IOFlexMixin
 from hdmf.common import VectorData, VectorIndex, DynamicTableRegion
@@ -13,6 +13,7 @@ from ndx_spikesorting import (
     RandomSpikes,
     Templates,
     NoiseLevels,
+    UnitLocations,
     SpikeSortingExtensions,
     SpikeSortingContainer,
 )
@@ -23,7 +24,7 @@ def set_up_nwbfile(nwbfile: NWBFile = None, n_electrodes: int = 10, n_units: int
     nwbfile = nwbfile or mock_NWBFile()
     device = mock_Device(nwbfile=nwbfile)
     electrode_group = mock_ElectrodeGroup(device=device, nwbfile=nwbfile)
-    _ = mock_ElectrodeTable(n_rows=n_electrodes, group=electrode_group, nwbfile=nwbfile)
+    _ = mock_ElectrodesTable(n_rows=n_electrodes, group=electrode_group, nwbfile=nwbfile)
 
     # Add units with mock spike times
     for i in range(n_units):
@@ -139,6 +140,38 @@ def create_mock_templates(nwbfile: NWBFile, num_units: int = 3, num_samples: int
     )
     return templates
 
+def create_mock_unit_locations_2d(nwbfile: NWBFile, num_units: int = 3):
+    """Create mock UnitLocations with random 2D coordinates for each unit."""
+    locations_data = np.random.rand(num_units, 2).astype(np.float32)  # Random (x, y) coordinates
+
+    data = VectorData(
+        name="locations",
+        data=locations_data,
+        description="3D locations of each unit",
+    )
+
+    unit_locations = UnitLocations(
+        name="unit_locations",
+        locations=data,
+    )
+    return unit_locations
+
+def create_mock_unit_locations_3d(nwbfile: NWBFile, num_units: int = 3):
+    """Create mock UnitLocations with random 3D coordinates for each unit."""
+    locations_data = np.random.rand(num_units, 3).astype(np.float32)  # Random (x, y, z) coordinates
+
+    data = VectorData(
+        name="locations",
+        data=locations_data,
+        description="3D locations of each unit",
+    )
+
+    unit_locations = UnitLocations(
+        name="unit_locations",
+        locations=data,
+    )
+    return unit_locations
+
 
 class TestRandomSpikesConstructor(TestCase):
     """Unit tests for RandomSpikes constructor."""
@@ -175,6 +208,25 @@ class TestTemplatesConstructor(TestCase):
         self.assertEqual(templates.data.data.shape[0], 9)
         self.assertEqual(len(templates.electrodes.data), 9)
 
+
+class TestUnitLocationsConstructor(TestCase):
+    """Unit tests for UnitLocations constructor."""
+
+    def test_constructor_2d(self):
+        """Test that UnitLocations constructor sets 2D locations correctly."""
+        nwbfile = set_up_nwbfile()
+        unit_locations = create_mock_unit_locations_2d(nwbfile)
+
+        self.assertEqual(unit_locations.name, "unit_locations")
+        self.assertEqual(unit_locations.locations.data.shape, (3, 2))  # 3 units, 2D coordinates
+
+    def test_constructor_3d(self):
+        """Test that UnitLocations constructor sets 3D locations correctly."""
+        nwbfile = set_up_nwbfile()
+        unit_locations = create_mock_unit_locations_3d(nwbfile)
+
+        self.assertEqual(unit_locations.name, "unit_locations")
+        self.assertEqual(unit_locations.locations.data.shape, (3, 3))  # 3 units, 3D coordinates
 
 class TestSpikeSortingContainerConstructor(TestCase):
     """Unit tests for SpikeSortingContainer constructor."""
@@ -379,6 +431,58 @@ class TestTemplatesRoundtrip(TestCase):
             np.testing.assert_array_equal(
                 read_templates.electrodes.data[:],
                 templates.electrodes.data[:],
+            )
+
+
+class TestUnitLocationsRoundtrip(TestCase):
+    """Roundtrip test for UnitLocations."""
+
+    def setUp(self):
+        self.nwbfile = set_up_nwbfile()
+        self.path = "test_unit_locations.nwb"
+
+    def tearDown(self):
+        remove_test_file(self.path)
+
+    def test_roundtrip(self):
+        """Test writing and reading UnitLocations."""
+        electrodes_region = self.nwbfile.create_electrode_table_region(
+            region=list(range(10)),
+            description="all electrodes",
+        )
+        units_region = create_units_region(self.nwbfile)
+
+        unit_locations = create_mock_unit_locations_3d(self.nwbfile)
+
+        extensions = SpikeSortingExtensions(name="extensions")
+        extensions.unit_locations = unit_locations
+
+        container = SpikeSortingContainer(
+            name="spike_sorting",
+            sampling_frequency=30000.0,
+            electrodes=electrodes_region,
+            units_region=units_region,
+        )
+        container.spike_sorting_extensions = extensions
+
+        ecephys_module = self.nwbfile.create_processing_module(
+            name="ecephys",
+            description="Extracellular electrophysiology processing",
+        )
+        ecephys_module.add(container)
+
+        with NWBHDF5IO(self.path, mode="w") as io:
+            io.write(self.nwbfile)
+
+        with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
+            read_nwbfile = io.read()
+            read_container = read_nwbfile.processing["ecephys"]["spike_sorting"]
+            read_extensions = read_container.spike_sorting_extensions
+            read_unit_locations = read_extensions.unit_locations
+
+            np.testing.assert_array_almost_equal(
+                read_unit_locations.locations.data[:],
+                unit_locations.locations.data[:],
             )
 
 
