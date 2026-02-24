@@ -81,15 +81,10 @@ def create_mock_random_spikes(num_units: int = 3, spikes_per_unit: list = None):
 
 def create_mock_noise_levels(num_channels: int = 120):
     """Create mock NoiseLevels with random noise values."""
-    noise_levels_data = VectorData(
-        name="data",
-        data=np.random.rand(num_channels).astype(np.float32),
-        description="Random noise levels for all channels",
-    )
 
     noise_levels = NoiseLevels(
         name="noise_levels",
-        data=noise_levels_data,
+        data=np.random.rand(num_channels),
     )
     return noise_levels
 
@@ -144,15 +139,9 @@ def create_mock_unit_locations_2d(nwbfile: NWBFile, num_units: int = 3):
     """Create mock UnitLocations with random 2D coordinates for each unit."""
     locations_data = np.random.rand(num_units, 2).astype(np.float32)  # Random (x, y) coordinates
 
-    data = VectorData(
-        name="locations",
-        data=locations_data,
-        description="3D locations of each unit",
-    )
-
     unit_locations = UnitLocations(
         name="unit_locations",
-        locations=data,
+        data=locations_data,
     )
     return unit_locations
 
@@ -160,15 +149,9 @@ def create_mock_unit_locations_3d(nwbfile: NWBFile, num_units: int = 3):
     """Create mock UnitLocations with random 3D coordinates for each unit."""
     locations_data = np.random.rand(num_units, 3).astype(np.float32)  # Random (x, y, z) coordinates
 
-    data = VectorData(
-        name="locations",
-        data=locations_data,
-        description="3D locations of each unit",
-    )
-
     unit_locations = UnitLocations(
         name="unit_locations",
-        locations=data,
+        data=locations_data,
     )
     return unit_locations
 
@@ -218,7 +201,7 @@ class TestUnitLocationsConstructor(TestCase):
         unit_locations = create_mock_unit_locations_2d(nwbfile)
 
         self.assertEqual(unit_locations.name, "unit_locations")
-        self.assertEqual(unit_locations.locations.data.shape, (3, 2))  # 3 units, 2D coordinates
+        self.assertEqual(unit_locations.data.shape, (3, 2))  # 3 units, 2D coordinates
 
     def test_constructor_3d(self):
         """Test that UnitLocations constructor sets 3D locations correctly."""
@@ -226,7 +209,7 @@ class TestUnitLocationsConstructor(TestCase):
         unit_locations = create_mock_unit_locations_3d(nwbfile)
 
         self.assertEqual(unit_locations.name, "unit_locations")
-        self.assertEqual(unit_locations.locations.data.shape, (3, 3))  # 3 units, 3D coordinates
+        self.assertEqual(unit_locations.data.shape, (3, 3))  # 3 units, 3D coordinates
 
 class TestSpikeSortingContainerConstructor(TestCase):
     """Unit tests for SpikeSortingContainer constructor."""
@@ -481,8 +464,8 @@ class TestUnitLocationsRoundtrip(TestCase):
             read_unit_locations = read_extensions.unit_locations
 
             np.testing.assert_array_almost_equal(
-                read_unit_locations.locations.data[:],
-                unit_locations.locations.data[:],
+                read_unit_locations.data[:],
+                unit_locations.data[:],
             )
 
 
