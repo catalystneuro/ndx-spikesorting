@@ -181,27 +181,17 @@ nwb_templates = Templates(
 # ---- Step 5: Convert noise_levels extension to NWB ----
 noise_levels_ext = sorting_analyzer.get_extension("noise_levels")
 noise_levels_data = noise_levels_ext.get_data()
-data = VectorData(
-    name="data",
-    data=noise_levels_data.astype(np.float32),
-    description="Estimated noise level for each channel",
-)
 nwb_noise_levels = NoiseLevels(
     name="noise_levels",
-    data=data,
+    data=noise_levels_data,
 )
 
 # ---- Step 6: Convert unit locations extension to NWB ----
 unit_locations_ext = sorting_analyzer.get_extension("unit_locations")
 unit_locations_data = unit_locations_ext.get_data()
-unit_locations = VectorData(
-    name="locations",
-    data=unit_locations_data.astype(np.float32),
-    description="Estimated unit locations in 3D space (x, y, z)"
-)
 nwb_unit_locations = UnitLocations(
     name="unit_locations",
-    locations=unit_locations,
+    data=unit_locations_data,
 )
 
 # ---- Step 7: Assemble the SpikeSortingContainer and write to NWB ----

@@ -73,13 +73,13 @@ groups:
   doc: Noise levels estimated after preprocessing for each channel
   datasets:
   - name: data
-    neurodata_type_inc: VectorData
     dtype: float32
     dims:
     - num_channels
     shape:
     - null
-    doc: Array of noise levels for each channel.
+    doc: Array of noise levels for each channel. Order and length must match
+      SpikeSortingContainer.electrodes.
     attributes:
     - name: unit
       dtype: text
@@ -92,8 +92,7 @@ groups:
   default_name: unit_locations
   doc: Estimated locations for each unit in x-y and optionally z dimensions.
   datasets:
-  - name: locations
-    neurodata_type_inc: VectorData
+  - name: data
     dtype: float
     dims:
     - - num_units

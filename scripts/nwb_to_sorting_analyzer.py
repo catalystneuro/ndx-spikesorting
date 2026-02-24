@@ -249,7 +249,7 @@ def _load_noise_levels_extension_from_nwb(extensions, sorting_analyzer):
     if noise_levels_nwb is None:
         return
 
-    noise_data = noise_levels_nwb.data.data[:]
+    noise_data = noise_levels_nwb.data[:]
 
     ext_class = get_extension_class("noise_levels")
     ext = ext_class(sorting_analyzer)
@@ -271,7 +271,7 @@ def _load_unit_locations_extension_from_nwb(extensions, sorting_analyzer):
     if unit_locations_nwb is None:
         return
 
-    locations_data = unit_locations_nwb.locations.data[:]
+    locations_data = unit_locations_nwb.data[:]
 
     ext_class = get_extension_class("unit_locations")
     ext = ext_class(sorting_analyzer)
