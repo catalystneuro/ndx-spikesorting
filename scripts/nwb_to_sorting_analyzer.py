@@ -79,6 +79,7 @@ def read_sorting_analyzer_from_nwb(nwbfile_path: str | Path) -> SortingAnalyzer:
     if extensions is not None:
         _load_random_spikes_extension_from_nwb(extensions, sorting, sorting_analyzer)
         _load_templates_extension_from_nwb(extensions, sorting_analyzer, sampling_frequency)
+        _load_noise_levels_extension_from_nwb(extensions, sorting_analyzer)
         _load_unit_locations_extension_from_nwb(extensions, sorting_analyzer)
 
     return sorting_analyzer
@@ -235,6 +236,28 @@ def _load_templates_extension_from_nwb(extensions, sorting_analyzer, sampling_fr
     sorting_analyzer.extensions["templates"] = ext
 
 
+def _load_noise_levels_extension_from_nwb(extensions, sorting_analyzer):
+    """Instantiate the noise_levels extension if present in the NWB container.
+
+    The NWB extension stores a simple dense array of noise levels with shape
+    (num_channels,). This maps directly to the expected format for the
+    NoiseLevels extension in SpikeInterface, so no complex conversion is needed.
+    Each value corresponds to a channel in the same order as sorting_analyzer.channel_ids.
+
+    """
+    noise_levels_nwb = extensions.noise_levels
+    if noise_levels_nwb is None:
+        return
+
+    noise_data = noise_levels_nwb.data[:]
+
+    ext_class = get_extension_class("noise_levels")
+    ext = ext_class(sorting_analyzer)
+    ext.data["noise_levels"] = noise_data.astype(np.float32)
+    ext.run_info = {"run_completed": True, "runtime_s": 0.0}
+    sorting_analyzer.extensions["noise_levels"] = ext
+
+
 def _load_unit_locations_extension_from_nwb(extensions, sorting_analyzer):
     """Instantiate the unit_locations extension if present in the NWB container.
 
@@ -248,10 +271,11 @@ def _load_unit_locations_extension_from_nwb(extensions, sorting_analyzer):
     if unit_locations_nwb is None:
         return
 
-    locations_data = unit_locations_nwb.locations.data[:]
+    locations_data = unit_locations_nwb.data[:]
 
     ext_class = get_extension_class("unit_locations")
     ext = ext_class(sorting_analyzer)
     ext.data["locations"] = locations_data.astype(np.float32)
     ext.run_info = {"run_completed": True, "runtime_s": 0.0}
     sorting_analyzer.extensions["unit_locations"] = ext
+

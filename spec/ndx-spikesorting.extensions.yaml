@@ -67,13 +67,32 @@ groups:
       datasets in lockstep. The electrodes for unit i are
       electrodes[data_index[i-1]:data_index[i]].
 
+- neurodata_type_def: NoiseLevels
+  neurodata_type_inc: NWBDataInterface
+  default_name: noise_levels
+  doc: Noise levels estimated after preprocessing for each channel
+  datasets:
+  - name: data
+    dtype: float32
+    dims:
+    - num_channels
+    shape:
+    - null
+    doc: Array of noise levels for each channel. Order and length must match
+      SpikeSortingContainer.electrodes.
+    attributes:
+    - name: unit
+      dtype: text
+      default_value: microvolts
+      doc: Unit of measurement for noise data.
+      required: false
+
 - neurodata_type_def: UnitLocations
   neurodata_type_inc: NWBDataInterface
   default_name: unit_locations
   doc: Estimated locations for each unit in x-y and optionally z dimensions.
   datasets:
-  - name: locations
-    neurodata_type_inc: VectorData
+  - name: data
     dtype: float
     dims:
     - - num_units
@@ -99,6 +118,9 @@ groups:
     quantity: '?'
   - neurodata_type_inc: Templates
     doc: Templates extension data.
+    quantity: '?'
+  - neurodata_type_inc: NoiseLevels
+    doc: Noise levels extension data.
     quantity: '?'
   - neurodata_type_inc: UnitLocations
     doc: Unit locations extension data.

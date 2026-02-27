@@ -21,6 +21,7 @@ from spikeinterface.core import create_sorting_analyzer, generate_ground_truth_r
 from ndx_spikesorting import (
     RandomSpikes,
     Templates,
+    NoiseLevels,
     UnitLocations,
     SpikeSortingContainer,
     SpikeSortingExtensions,
@@ -46,6 +47,7 @@ sorting_analyzer.compute(
     {
         "random_spikes": {"max_spikes_per_unit": 10, "seed": 42},
         "templates": {},
+        "noise_levels": {},
         "unit_locations": {"method": "monopolar_triangulation"},
     }
 )
@@ -176,26 +178,30 @@ nwb_templates = Templates(
     electrodes=template_electrodes,
 )
 
-# ---- Step 5: Convert unit locations extension to NWB ----
-unit_locations_ext = sorting_analyzer.get_extension("unit_locations")
-unit_locations_data = unit_locations_ext.get_data()
-unit_locations = VectorData(
-    name="locations",
-    data=unit_locations_data.astype(np.float32),
-    description="Estimated unit locations in 3D space (x, y, z)"
-)
-nwb_unit_locations = UnitLocations(
-    name="unit_locations",
-    locations=unit_locations,
+# ---- Step 5: Convert noise_levels extension to NWB ----
+noise_levels_ext = sorting_analyzer.get_extension("noise_levels")
+noise_levels_data = noise_levels_ext.get_data()
+nwb_noise_levels = NoiseLevels(
+    name="noise_levels",
+    data=noise_levels_data,
 )
 
-# ---- Step 6: Assemble the SpikeSortingContainer and write to NWB ----
+# ---- Step 6: Convert unit locations extension to NWB ----
+unit_locations_ext = sorting_analyzer.get_extension("unit_locations")
+unit_locations_data = unit_locations_ext.get_data()
+nwb_unit_locations = UnitLocations(
+    name="unit_locations",
+    data=unit_locations_data,
+)
+
+# ---- Step 7: Assemble the SpikeSortingContainer and write to NWB ----
 
 sparsity_mask = sparsity.mask if sparsity is not None else None
 
 extensions = SpikeSortingExtensions(name="extensions")
 extensions.random_spikes = nwb_random_spikes
 extensions.templates = nwb_templates
+extensions.noise_levels = nwb_noise_levels
 extensions.unit_locations = nwb_unit_locations
 
 container = SpikeSortingContainer(
