@@ -81,11 +81,15 @@ def read_sorting_analyzer_from_nwb(nwbfile_path: str | Path) -> SortingAnalyzer:
         _load_templates_extension_from_nwb(extensions, sorting_analyzer, sampling_frequency)
         _load_noise_levels_extension_from_nwb(extensions, sorting_analyzer)
         _load_unit_locations_extension_from_nwb(extensions, sorting_analyzer)
+        _load_spike_amplitudes_extension_from_nwb(extensions, sorting_analyzer)
+        _load_amplitude_scalings_extension_from_nwb(extensions, sorting_analyzer)
+        _load_spike_locations_extension_from_nwb(extensions, sorting_analyzer)
+        
 
     return sorting_analyzer
 
 
-def _load_random_spikes_extension_from_nwb(extensions, sorting, sorting_analyzer):
+def _load_random_spikes_extension_from_nwb(extensions, sorting_analyzer):
     """Instantiate the random_spikes extension if present in the NWB container.
 
     This requires converting between two different index representations:
@@ -137,6 +141,7 @@ def _load_random_spikes_extension_from_nwb(extensions, sorting, sorting_analyzer
     if random_spikes_nwb is None:
         return
 
+    sorting = sorting_analyzer.sorting
     indices_data = random_spikes_nwb.random_spikes_indices.data[:]
     index_boundaries = random_spikes_nwb.random_spikes_indices_index.data[:]
 
@@ -279,3 +284,59 @@ def _load_unit_locations_extension_from_nwb(extensions, sorting_analyzer):
     ext.run_info = {"run_completed": True, "runtime_s": 0.0}
     sorting_analyzer.extensions["unit_locations"] = ext
 
+
+def _load_spike_amplitudes_extension_from_nwb(extensions, sorting_analyzer):
+    """Instantiate the spike_amplitudes extension if present in the NWB container.
+    """
+    spike_amplitudes_nwb = extensions.spike_amplitudes
+    if spike_amplitudes_nwb is None:
+        return
+
+    spike_vector = sorting_analyzer.sorting.to_spike_vector()
+    unit_indices = spike_vector["unit_index"]
+    sort_order = np.argsort(unit_indices)
+    reverse_order = np.argsort(sort_order, kind="stable")
+    spike_amplitudes = spike_amplitudes_nwb.data[reverse_order]
+    ext_class = get_extension_class("spike_amplitudes")
+    ext = ext_class(sorting_analyzer)
+    ext.data["spike_amplitudes"] = spike_amplitudes.astype(np.float32)
+    ext.run_info = {"run_completed": True, "runtime_s": 0.0}
+    sorting_analyzer.extensions["spike_amplitudes"] = ext
+
+
+def _load_spike_locations_extension_from_nwb(extensions, sorting_analyzer):
+    """Instantiate the spike_locations extension if present in the NWB container.
+    """
+    spike_locations_nwb = extensions.spike_locations
+    if spike_locations_nwb is None:
+        return
+
+    spike_vector = sorting_analyzer.sorting.to_spike_vector()
+    unit_indices = spike_vector["unit_index"]
+    sort_order = np.argsort(unit_indices)
+    reverse_order = np.argsort(sort_order, kind="stable")
+    spike_locations = spike_locations_nwb.data[reverse_order]
+    ext_class = get_extension_class("spike_locations")
+    ext = ext_class(sorting_analyzer)
+    ext.data["spike_locations"] = spike_locations.astype(np.float32)
+    ext.run_info = {"run_completed": True, "runtime_s": 0.0}
+    sorting_analyzer.extensions["spike_locations"] = ext
+
+
+def _load_amplitude_scalings_extension_from_nwb(extensions, sorting_analyzer):
+    """Instantiate the amplitude_scalings extension if present in the NWB container.
+    """
+    amplitude_scalings_nwb = extensions.amplitude_scalings
+    if amplitude_scalings_nwb is None:
+        return
+
+    spike_vector = sorting_analyzer.sorting.to_spike_vector()
+    unit_indices = spike_vector["unit_index"]
+    sort_order = np.argsort(unit_indices)
+    reverse_order = np.argsort(sort_order, kind="stable")
+    amplitude_scalings = amplitude_scalings_nwb.data[reverse_order]
+    ext_class = get_extension_class("amplitude_scalings")
+    ext = ext_class(sorting_analyzer)
+    ext.data["amplitude_scalings"] = amplitude_scalings.astype(np.float32)
+    ext.run_info = {"run_completed": True, "runtime_s": 0.0}
+    sorting_analyzer.extensions["amplitude_scalings"] = ext
