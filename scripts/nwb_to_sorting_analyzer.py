@@ -273,7 +273,8 @@ def _load_unit_locations_extension_from_nwb(extensions, sorting_analyzer):
     The NWB extension stores a simple dense array of unit locations with shape
     (num_units, 3) for (x, y, z) coordinates. This maps directly to the
     expected format for the UnitLocations extension in SpikeInterface, so no
-    complex conversion is needed. Each row corresponds to a unit in the same order as sorting_analyzer.unit_ids.
+    complex conversion is needed. Each row corresponds to a unit in the same order 
+    as sorting_analyzer.unit_ids.
 
     """
     unit_locations_nwb = extensions.unit_locations
@@ -295,7 +296,8 @@ def _load_correlograms_extension_from_nwb(extensions, sorting_analyzer):
 
     The NWB extension stores a simple dense array of correlograms with shape
     (num_units, num_units, num_bins). This maps directly to the expected format for the
-    Correlograms extension in SpikeInterface, so no complex conversion is needed. Each row/column corresponds to a unit in the same order as sorting_analyzer.unit_ids.
+    Correlograms extension in SpikeInterface, so no complex conversion is needed. 
+    Each row/column corresponds to a unit in the same order as sorting_analyzer.unit_ids.
 
     """
     correlograms_nwb = extensions.correlograms
@@ -318,7 +320,8 @@ def _load_isi_histograms_extension_from_nwb(extensions, sorting_analyzer):
 
     The NWB extension stores a simple dense array of isi histograms with shape
     (num_units, num_bins). This maps directly to the expected format for the
-    ISIHistograms extension in SpikeInterface, so no complex conversion is needed. Each row/column corresponds to a unit in the same order as sorting_analyzer.unit_ids.
+    ISIHistograms extension in SpikeInterface, so no complex conversion is needed. 
+    Each row/column corresponds to a unit in the same order as sorting_analyzer.unit_ids.
 
     """
     isi_histograms_nwb = extensions.isi_histograms
@@ -340,7 +343,8 @@ def _load_template_similarity_extension_from_nwb(extensions, sorting_analyzer):
 
     The NWB extension stores a simple dense array of template similarity with shape
     (num_units, num_units). This maps directly to the expected format for the
-    TemplateSimilarity extension in SpikeInterface, so no complex conversion is needed. Each row/column corresponds to a unit in the same order as sorting_analyzer.unit_ids.
+    TemplateSimilarity extension in SpikeInterface, so no complex conversion is needed. 
+    Each row/column corresponds to a unit in the same order as sorting_analyzer.unit_ids.
 
     """
     template_similarity_nwb = extensions.template_similarity
