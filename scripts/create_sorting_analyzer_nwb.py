@@ -241,13 +241,22 @@ nwb_classes = {
     "amplitude_scalings": AmplitudeScalings
 }
 nwb_extensions = {}
-spike_vector = sorting_analyzer.sorting
+spike_vector = sorting_analyzer.sorting.to_spike_vector()
 unit_indices = spike_vector["unit_index"]
 sort_order = np.argsort(unit_indices)
 cumulative_index = np.cumsum(np.nonzero(np.diff(unit_indices[sort_order]) > 0)[0])
 for extension_name in base_vector_extensions:
     extension = sorting_analyzer.get_extension(extension_name)
     all_data = extension.get_data()[sort_order]
+
+    if all_data.dtype.names is not None:
+        all_data = np.stack([all_data[name] for name in all_data.dtype.names], axis=1)
+
+    data = VectorData(
+        name="data",
+        data=all_data,
+        description=f"{extension_name} data",
+    )
 
     data_index = VectorIndex(
         name="data_index",
@@ -256,7 +265,7 @@ for extension_name in base_vector_extensions:
     )
     nwb_extensions[extension_name] = nwb_classes[extension_name](
         name=extension_name,
-        data=all_data,
+        data=data,
         data_index=data_index
     )
 

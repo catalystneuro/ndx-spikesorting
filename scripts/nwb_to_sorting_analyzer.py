@@ -77,10 +77,13 @@ def read_sorting_analyzer_from_nwb(nwbfile_path: str | Path) -> SortingAnalyzer:
     # -- Instantiate precomputed extensions --
     extensions = container.spike_sorting_extensions
     if extensions is not None:
-        _load_random_spikes_extension_from_nwb(extensions, sorting, sorting_analyzer)
-        _load_templates_extension_from_nwb(extensions, sorting_analyzer, sampling_frequency)
+        _load_random_spikes_extension_from_nwb(extensions, sorting_analyzer)
+        _load_templates_extension_from_nwb(extensions, sorting_analyzer)
         _load_noise_levels_extension_from_nwb(extensions, sorting_analyzer)
         _load_unit_locations_extension_from_nwb(extensions, sorting_analyzer)
+        _load_correlograms_extension_from_nwb(extensions, sorting_analyzer)
+        _load_isi_histograms_extension_from_nwb(extensions, sorting_analyzer)
+        _load_template_similarity_extension_from_nwb(extensions, sorting_analyzer)
         _load_spike_amplitudes_extension_from_nwb(extensions, sorting_analyzer)
         _load_amplitude_scalings_extension_from_nwb(extensions, sorting_analyzer)
         _load_spike_locations_extension_from_nwb(extensions, sorting_analyzer)
@@ -181,7 +184,7 @@ def _load_random_spikes_extension_from_nwb(extensions, sorting_analyzer):
     sorting_analyzer.extensions["random_spikes"] = ext
 
 
-def _load_templates_extension_from_nwb(extensions, sorting_analyzer, sampling_frequency):
+def _load_templates_extension_from_nwb(extensions, sorting_analyzer):
     """Instantiate the templates extension if present in the NWB container.
 
     This requires converting between two different template representations:
@@ -226,8 +229,8 @@ def _load_templates_extension_from_nwb(extensions, sorting_analyzer, sampling_fr
     num_samples = templates_nwb.data.data.shape[1]
 
     # Derive timing params from peak_sample_index and sampling_frequency
-    ms_before = peak_sample_index / sampling_frequency * 1000.0
-    ms_after = (num_samples - peak_sample_index) / sampling_frequency * 1000.0
+    ms_before = peak_sample_index / sorting_analyzer.sampling_frequency * 1000.0
+    ms_after = (num_samples - peak_sample_index) / sorting_analyzer.sampling_frequency * 1000.0
 
     # Reconstruct dense templates from sparse ragged arrays
     dense_templates = templates_to_dense(templates_nwb, num_channels)
@@ -258,6 +261,7 @@ def _load_noise_levels_extension_from_nwb(extensions, sorting_analyzer):
 
     ext_class = get_extension_class("noise_levels")
     ext = ext_class(sorting_analyzer)
+    ext.set_params()
     ext.data["noise_levels"] = noise_data.astype(np.float32)
     ext.run_info = {"run_completed": True, "runtime_s": 0.0}
     sorting_analyzer.extensions["noise_levels"] = ext
@@ -280,9 +284,77 @@ def _load_unit_locations_extension_from_nwb(extensions, sorting_analyzer):
 
     ext_class = get_extension_class("unit_locations")
     ext = ext_class(sorting_analyzer)
+    ext.set_params()
     ext.data["locations"] = locations_data.astype(np.float32)
     ext.run_info = {"run_completed": True, "runtime_s": 0.0}
     sorting_analyzer.extensions["unit_locations"] = ext
+
+
+def _load_correlograms_extension_from_nwb(extensions, sorting_analyzer):
+    """Instantiate the correlograms extension if present in the NWB container.
+
+    The NWB extension stores a simple dense array of correlograms with shape
+    (num_units, num_units, num_bins). This maps directly to the expected format for the
+    Correlograms extension in SpikeInterface, so no complex conversion is needed. Each row/column corresponds to a unit in the same order as sorting_analyzer.unit_ids.
+
+    """
+    correlograms_nwb = extensions.correlograms
+    if correlograms_nwb is None:
+        return
+
+    correlograms_data = correlograms_nwb.data[:]
+
+    ext_class = get_extension_class("correlograms")
+    ext = ext_class(sorting_analyzer)
+    ext.set_params()
+    ext.data["ccgs"] = correlograms_data
+    ext.data["bins"] = correlograms_nwb.bin_edges[:]
+    ext.run_info = {"run_completed": True, "runtime_s": 0.0}
+    sorting_analyzer.extensions["correlograms"] = ext
+
+
+def _load_isi_histograms_extension_from_nwb(extensions, sorting_analyzer):
+    """Instantiate the isi histograms extension if present in the NWB container.
+
+    The NWB extension stores a simple dense array of isi histograms with shape
+    (num_units, num_bins). This maps directly to the expected format for the
+    ISIHistograms extension in SpikeInterface, so no complex conversion is needed. Each row/column corresponds to a unit in the same order as sorting_analyzer.unit_ids.
+
+    """
+    isi_histograms_nwb = extensions.isi_histograms
+    if isi_histograms_nwb is None:
+        return
+
+    isi_histograms_data = isi_histograms_nwb.data[:]
+
+    ext_class = get_extension_class("isi_histograms")
+    ext = ext_class(sorting_analyzer)
+    ext.set_params()
+    ext.data["isi_histograms"] = isi_histograms_data
+    ext.data["bins"] = isi_histograms_nwb.bin_edges[:]
+    ext.run_info = {"run_completed": True, "runtime_s": 0.0}
+    sorting_analyzer.extensions["isi_histograms"] = ext
+
+def _load_template_similarity_extension_from_nwb(extensions, sorting_analyzer):
+    """Instantiate the template_similarity extension if present in the NWB container.
+
+    The NWB extension stores a simple dense array of template similarity with shape
+    (num_units, num_units). This maps directly to the expected format for the
+    TemplateSimilarity extension in SpikeInterface, so no complex conversion is needed. Each row/column corresponds to a unit in the same order as sorting_analyzer.unit_ids.
+
+    """
+    template_similarity_nwb = extensions.template_similarity
+    if template_similarity_nwb is None:
+        return
+
+    template_similarity_data = template_similarity_nwb.data[:]
+
+    ext_class = get_extension_class("template_similarity")
+    ext = ext_class(sorting_analyzer)
+    ext.set_params()
+    ext.data["similarity"] = template_similarity_data
+    ext.run_info = {"run_completed": True, "runtime_s": 0.0}
+    sorting_analyzer.extensions["template_similarity"] = ext
 
 
 def _load_spike_amplitudes_extension_from_nwb(extensions, sorting_analyzer):
@@ -296,10 +368,10 @@ def _load_spike_amplitudes_extension_from_nwb(extensions, sorting_analyzer):
     unit_indices = spike_vector["unit_index"]
     sort_order = np.argsort(unit_indices)
     reverse_order = np.argsort(sort_order, kind="stable")
-    spike_amplitudes = spike_amplitudes_nwb.data[reverse_order]
+    spike_amplitudes = spike_amplitudes_nwb.data[:][reverse_order]
     ext_class = get_extension_class("spike_amplitudes")
     ext = ext_class(sorting_analyzer)
-    ext.data["spike_amplitudes"] = spike_amplitudes.astype(np.float32)
+    ext.data["amplitudes"] = spike_amplitudes.astype(np.float32)
     ext.run_info = {"run_completed": True, "runtime_s": 0.0}
     sorting_analyzer.extensions["spike_amplitudes"] = ext
 
@@ -315,10 +387,16 @@ def _load_spike_locations_extension_from_nwb(extensions, sorting_analyzer):
     unit_indices = spike_vector["unit_index"]
     sort_order = np.argsort(unit_indices)
     reverse_order = np.argsort(sort_order, kind="stable")
-    spike_locations = spike_locations_nwb.data[reverse_order]
+    spike_locations = spike_locations_nwb.data[:][reverse_order]
     ext_class = get_extension_class("spike_locations")
     ext = ext_class(sorting_analyzer)
-    ext.data["spike_locations"] = spike_locations.astype(np.float32)
+    # make x, y or x, y, z structured array
+    if spike_locations.shape[1] == 2:
+        spike_locations = np.core.records.fromarrays(spike_locations.T, names="x,y")
+    elif spike_locations.shape[1] == 3:
+        spike_locations = np.core.records.fromarrays(spike_locations.T, names="x,y,z")
+    ext.set_params()
+    ext.data["spike_locations"] = spike_locations
     ext.run_info = {"run_completed": True, "runtime_s": 0.0}
     sorting_analyzer.extensions["spike_locations"] = ext
 
@@ -334,9 +412,10 @@ def _load_amplitude_scalings_extension_from_nwb(extensions, sorting_analyzer):
     unit_indices = spike_vector["unit_index"]
     sort_order = np.argsort(unit_indices)
     reverse_order = np.argsort(sort_order, kind="stable")
-    amplitude_scalings = amplitude_scalings_nwb.data[reverse_order]
+    amplitude_scalings = amplitude_scalings_nwb.data[:][reverse_order]
     ext_class = get_extension_class("amplitude_scalings")
     ext = ext_class(sorting_analyzer)
+    ext.set_params()
     ext.data["amplitude_scalings"] = amplitude_scalings.astype(np.float32)
     ext.run_info = {"run_completed": True, "runtime_s": 0.0}
     sorting_analyzer.extensions["amplitude_scalings"] = ext

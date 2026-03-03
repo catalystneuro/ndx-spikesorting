@@ -124,6 +124,10 @@ groups:
     doc: Correlograms for each pair of unit.
   - name: bin_edges
     dtype: float
+    dims:
+    - num_bins
+    shape:
+    - null
     doc: bin edges in ms over which counts are computed.
 
 - neurodata_type_def: ISIHistograms
@@ -142,6 +146,10 @@ groups:
     doc: ISI histograms for each unit.
   - name: bin_edges
     dtype: float
+    dims:
+    - num_bins
+    shape:
+    - null
     doc: bin edges in ms over which counts are computed.
 
 
@@ -193,7 +201,10 @@ groups:
     - - num_spikes_total
       - x, y, z
     shape:
-    - null
+    - - null
+      - 2
+    - - null
+      - 3
     doc: Concatenated array of spike locations for all units. Use spike_location_index 
       to retrieve indices for each unit.
   - name: data_index
