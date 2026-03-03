@@ -95,7 +95,7 @@ units_region = DynamicTableRegion(
     table=nwbfile.units,
 )
 
-# ---- Step 3: Convert s to NWB ----
+# ---- Step 3: Convert extensions to NWB ----
 
 # Random spikes
 random_spikes_ext = sorting_analyzer.get_extension("random_spikes")
