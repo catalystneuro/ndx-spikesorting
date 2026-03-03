@@ -286,7 +286,7 @@ def _load_unit_locations_extension_from_nwb(extensions, sorting_analyzer):
     ext_class = get_extension_class("unit_locations")
     ext = ext_class(sorting_analyzer)
     ext.set_params()
-    ext.data["locations"] = locations_data.astype(np.float32)
+    ext.data["unit_locations"] = locations_data.astype(np.float32)
     ext.run_info = {"run_completed": True, "runtime_s": 0.0}
     sorting_analyzer.extensions["unit_locations"] = ext
 
