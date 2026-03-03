@@ -18,6 +18,13 @@ RandomSpikes = get_class("RandomSpikes", "ndx-spikesorting")
 Templates = get_class("Templates", "ndx-spikesorting")
 NoiseLevels = get_class("NoiseLevels", "ndx-spikesorting")
 UnitLocations = get_class("UnitLocations", "ndx-spikesorting")
+Correlograms = get_class("Correlograms", "ndx-spikesorting")
+ISIHistograms = get_class("ISIHistograms", "ndx-spikesorting")
+TemplateSimilarity = get_class("TemplateSimilarity", "ndx-spikesorting")
+SpikeAmplitudes = get_class("SpikeAmplitudes", "ndx-spikesorting")
+SpikeLocations = get_class("SpikeLocations", "ndx-spikesorting")
+AmplitudeScalings = get_class("AmplitudeScalings", "ndx-spikesorting")
+
 SpikeSortingExtensions = get_class("SpikeSortingExtensions", "ndx-spikesorting")
 SpikeSortingContainer = get_class("SpikeSortingContainer", "ndx-spikesorting")
 
@@ -28,6 +35,12 @@ __all__ = [
     "Templates",
     "NoiseLevels",
     "UnitLocations",
+    "Correlograms",
+    "ISIHistograms",
+    "TemplateSimilarity",
+    "SpikeAmplitudes",
+    "SpikeLocations",
+    "AmplitudeScalings",
     "SpikeSortingExtensions",
     "SpikeSortingContainer",
     "templates_to_dense",

@@ -18,8 +18,7 @@ groups:
   - name: random_spikes_indices_index
     neurodata_type_inc: VectorIndex
     doc: Index into random_spikes_indices for each unit. The indices for unit i 
-      are 
-      random_spikes_indices[random_spikes_indices_index[i-1]:random_spikes_indices_index[i]].
+      are random_spikes_indices[random_spikes_indices_index[i-1]:random_spikes_indices_index[i]].
 
 - neurodata_type_def: Templates
   neurodata_type_inc: NWBDataInterface
@@ -107,6 +106,132 @@ groups:
     doc: Locations of units. Shape is (num_units, 2) for 2D locations (x-y) or 
       (num_units, 3) for 3D locations (x-y-z).
 
+- neurodata_type_def: Correlograms
+  neurodata_type_inc: NWBDataInterface
+  default_name: correlograms
+  doc: The correlograms for each unit pair. Diagonals are auto-correlograms.
+  datasets:
+  - name: data
+    dtype: float
+    dims:
+    - num_units
+    - num_units
+    - num_bins
+    shape:
+    - null
+    - null
+    - null
+    doc: Correlograms for each pair of unit.
+  - name: bin_edges
+    dtype: float
+    dims:
+    - num_bins
+    shape:
+    - null
+    doc: bin edges in ms over which counts are computed.
+
+- neurodata_type_def: ISIHistograms
+  neurodata_type_inc: NWBDataInterface
+  default_name: isi_histograms
+  doc: The inter-spike-interval histograms for each unit
+  datasets:
+  - name: data
+    dtype: float
+    dims:
+    - num_units
+    - num_bins
+    shape:
+    - null
+    - null
+    doc: ISI histograms for each unit.
+  - name: bin_edges
+    dtype: float
+    dims:
+    - num_bins
+    shape:
+    - null
+    doc: bin edges in ms over which counts are computed.
+
+
+- neurodata_type_def: TemplateSimilarity
+  neurodata_type_inc: NWBDataInterface
+  default_name: template_similarity
+  doc: The template similarity for each unit pair.
+  datasets:
+  - name: data
+    dtype: float
+    dims:
+    - num_units
+    - nnum_units
+    shape:
+    - null
+    - null
+    doc: The similarity value for each unit pair.
+
+- neurodata_type_def: SpikeAmplitudes
+  neurodata_type_inc: NWBDataInterface
+  default_name: spike_amplitudes
+  doc: The amplitude of each spike in uV.
+  datasets:
+  - name: data
+    neurodata_type_inc: VectorData
+    dtype: float
+    dims:
+    - num_spikes_total
+    shape:
+    - null
+    doc: Concatenated array of spike amplitudes for all units. Use spike_amplitude_index 
+      to retrieve indices for each unit.
+  - name: data_index
+    neurodata_type_inc: VectorIndex
+    doc: Index into data for each unit. The indices for unit i 
+      are data[data_index[i-1]:data_index[i]].
+
+- neurodata_type_def: SpikeLocations
+  neurodata_type_inc: NWBDataInterface
+  default_name: spike_locations
+  doc: The estimated location of each spike in 2D or 3D.
+  datasets:
+  - name: data
+    neurodata_type_inc: VectorData
+    dtype: float
+    dims:
+    - - num_spikes_total
+      - x, y
+    - - num_spikes_total
+      - x, y, z
+    shape:
+    - - null
+      - 2
+    - - null
+      - 3
+    doc: Concatenated array of spike locations for all units. Use spike_location_index 
+      to retrieve indices for each unit.
+  - name: data_index
+    neurodata_type_inc: VectorIndex
+    doc: Index into data for each unit. The indices for unit i 
+      are data[data_index[i-1]:data_index[i]].
+
+- neurodata_type_def: AmplitudeScalings
+  neurodata_type_inc: NWBDataInterface
+  default_name: amplitude_scalings
+  doc: The amplitude scaling of each spike (the relative amplitude of the spike with
+    respect to the template)
+  datasets:
+  - name: data
+    neurodata_type_inc: VectorData
+    dtype: float32
+    dims:
+    - num_spikes_total
+    shape:
+    - null
+    doc: Concatenated array of amplitude scalings for all units. Use amplitude_scalings_index 
+      to retrieve indices for each unit.
+  - name: data_index
+    neurodata_type_inc: VectorIndex
+    doc: Index into data for each unit. The indices for unit i 
+      are data[data_index[i-1]:data_index[i]].
+
 - neurodata_type_def: SpikeSortingExtensions
   neurodata_type_inc: NWBDataInterface
   default_name: extensions
@@ -124,6 +249,24 @@ groups:
     quantity: '?'
   - neurodata_type_inc: UnitLocations
     doc: Unit locations extension data.
+    quantity: '?'
+  - neurodata_type_inc: Correlograms
+    doc: Unit correlograms.
+    quantity: '?'
+  - neurodata_type_inc: ISIHistograms
+    doc: Unit ISI histograms data.
+    quantity: '?'
+  - neurodata_type_inc: TemplateSimilarity
+    doc: Unit template similarities.
+    quantity: '?'
+  - neurodata_type_inc: SpikeAmplitudes
+    doc: Spike amplitudes extension data.
+    quantity: '?'
+  - neurodata_type_inc: SpikeLocations
+    doc: Spike locations extension data.
+    quantity: '?'
+  - neurodata_type_inc: AmplitudeScalings
+    doc: Amplitudes scalings extension data.
     quantity: '?'
 
 - neurodata_type_def: SpikeSortingContainer

@@ -14,6 +14,12 @@ from ndx_spikesorting import (
     Templates,
     NoiseLevels,
     UnitLocations,
+    Correlograms,
+    ISIHistograms,
+    TemplateSimilarity,
+    SpikeAmplitudes,
+    AmplitudeScalings,
+    SpikeLocations,
     SpikeSortingExtensions,
     SpikeSortingContainer,
 )
@@ -156,6 +162,139 @@ def create_mock_unit_locations_3d(nwbfile: NWBFile, num_units: int = 3):
     return unit_locations
 
 
+def create_mock_correlograms(num_units: int = 3, num_bins: int = 50):
+    """Create mock Correlograms with random data."""
+    data = np.random.rand(num_units, num_units, num_bins).astype(np.float64)
+    bin_edges = np.linspace(-50, 50, num_bins).astype(np.float64)
+
+    correlograms = Correlograms(
+        name="correlograms",
+        data=data,
+        bin_edges=bin_edges,
+    )
+    return correlograms
+
+
+def create_mock_isi_histograms(num_units: int = 3, num_bins: int = 100):
+    """Create mock ISIHistograms with random data."""
+    data = np.random.rand(num_units, num_bins).astype(np.float64)
+    bin_edges = np.linspace(0, 100, num_bins).astype(np.float64)
+
+    isi_histograms = ISIHistograms(
+        name="isi_histograms",
+        data=data,
+        bin_edges=bin_edges,
+    )
+    return isi_histograms
+
+
+def create_mock_template_similarity(num_units: int = 3):
+    """Create mock TemplateSimilarity with random similarity matrix."""
+    data = np.random.rand(num_units, num_units).astype(np.float64)
+    # Make symmetric
+    data = (data + data.T) / 2.0
+    np.fill_diagonal(data, 1.0)
+
+    template_similarity = TemplateSimilarity(
+        name="template_similarity",
+        data=data,
+    )
+    return template_similarity
+
+
+def create_mock_spike_amplitudes(num_units: int = 3, spikes_per_unit: list = None):
+    """Create mock SpikeAmplitudes with ragged amplitude data."""
+    if spikes_per_unit is None:
+        spikes_per_unit = [50, 40, 60]
+
+    all_amplitudes = []
+    cumulative_index = []
+    for n_spikes in spikes_per_unit:
+        unit_amplitudes = np.random.randn(n_spikes).astype(np.float64) * 100
+        all_amplitudes.append(unit_amplitudes)
+        cumulative_index.append(sum(len(a) for a in all_amplitudes))
+
+    data = VectorData(
+        name="data",
+        data=np.concatenate(all_amplitudes),
+        description="Spike amplitudes for all units",
+    )
+    data_index = VectorIndex(
+        name="data_index",
+        data=np.array(cumulative_index, dtype=np.int64),
+        target=data,
+    )
+
+    spike_amplitudes = SpikeAmplitudes(
+        name="spike_amplitudes",
+        data=data,
+        data_index=data_index,
+    )
+    return spike_amplitudes
+
+
+def create_mock_spike_locations(num_units: int = 3, spikes_per_unit: list = None, ndim: int = 2):
+    """Create mock SpikeLocations with ragged location data."""
+    if spikes_per_unit is None:
+        spikes_per_unit = [50, 40, 60]
+
+    all_locations = []
+    cumulative_index = []
+    for n_spikes in spikes_per_unit:
+        unit_locations = np.random.rand(n_spikes, ndim).astype(np.float64)
+        all_locations.append(unit_locations)
+        cumulative_index.append(sum(len(a) for a in all_locations))
+
+    data = VectorData(
+        name="data",
+        data=np.vstack(all_locations),
+        description="Spike locations for all units",
+    )
+    data_index = VectorIndex(
+        name="data_index",
+        data=np.array(cumulative_index, dtype=np.int64),
+        target=data,
+    )
+
+    spike_locations = SpikeLocations(
+        name="spike_locations",
+        data=data,
+        data_index=data_index,
+    )
+    return spike_locations
+
+
+def create_mock_amplitude_scalings(num_units: int = 3, spikes_per_unit: list = None):
+    """Create mock AmplitudeScalings with ragged scaling data."""
+    if spikes_per_unit is None:
+        spikes_per_unit = [50, 40, 60]
+
+    all_scalings = []
+    cumulative_index = []
+    for n_spikes in spikes_per_unit:
+        unit_scalings = np.random.rand(n_spikes).astype(np.float32) + 0.5
+        all_scalings.append(unit_scalings)
+        cumulative_index.append(sum(len(a) for a in all_scalings))
+
+    data = VectorData(
+        name="data",
+        data=np.concatenate(all_scalings),
+        description="Amplitude scalings for all units",
+    )
+    data_index = VectorIndex(
+        name="data_index",
+        data=np.array(cumulative_index, dtype=np.int64),
+        target=data,
+    )
+
+    amplitude_scalings = AmplitudeScalings(
+        name="amplitude_scalings",
+        data=data,
+        data_index=data_index,
+    )
+    return amplitude_scalings
+
+
 class TestRandomSpikesConstructor(TestCase):
     """Unit tests for RandomSpikes constructor."""
 
@@ -210,6 +349,81 @@ class TestUnitLocationsConstructor(TestCase):
 
         self.assertEqual(unit_locations.name, "unit_locations")
         self.assertEqual(unit_locations.data.shape, (3, 3))  # 3 units, 3D coordinates
+
+class TestCorrelogramsConstructor(TestCase):
+    """Unit tests for Correlograms constructor."""
+
+    def test_constructor(self):
+        """Test that Correlograms constructor sets values correctly."""
+        correlograms = create_mock_correlograms(num_units=3, num_bins=50)
+
+        self.assertEqual(correlograms.name, "correlograms")
+        self.assertEqual(correlograms.data.shape, (3, 3, 50))
+        self.assertEqual(correlograms.bin_edges.shape, (50,))
+
+
+class TestISIHistogramsConstructor(TestCase):
+    """Unit tests for ISIHistograms constructor."""
+
+    def test_constructor(self):
+        """Test that ISIHistograms constructor sets values correctly."""
+        isi_histograms = create_mock_isi_histograms(num_units=3, num_bins=100)
+
+        self.assertEqual(isi_histograms.name, "isi_histograms")
+        self.assertEqual(isi_histograms.data.shape, (3, 100))
+        self.assertEqual(isi_histograms.bin_edges.shape, (100,))
+
+
+class TestTemplateSimilarityConstructor(TestCase):
+    """Unit tests for TemplateSimilarity constructor."""
+
+    def test_constructor(self):
+        """Test that TemplateSimilarity constructor sets values correctly."""
+        template_similarity = create_mock_template_similarity(num_units=3)
+
+        self.assertEqual(template_similarity.name, "template_similarity")
+        self.assertEqual(template_similarity.data.shape, (3, 3))
+
+
+class TestSpikeAmplitudesConstructor(TestCase):
+    """Unit tests for SpikeAmplitudes constructor."""
+
+    def test_constructor(self):
+        """Test that SpikeAmplitudes constructor sets values correctly."""
+        spike_amplitudes = create_mock_spike_amplitudes()
+
+        self.assertEqual(spike_amplitudes.name, "spike_amplitudes")
+        self.assertEqual(len(spike_amplitudes.data.data), 150)  # 50 + 40 + 60
+
+
+class TestSpikeLocationsConstructor(TestCase):
+    """Unit tests for SpikeLocations constructor."""
+
+    def test_constructor_2d(self):
+        """Test that SpikeLocations constructor sets 2D locations correctly."""
+        spike_locations = create_mock_spike_locations(ndim=2)
+
+        self.assertEqual(spike_locations.name, "spike_locations")
+        self.assertEqual(spike_locations.data.data.shape, (150, 2))
+
+    def test_constructor_3d(self):
+        """Test that SpikeLocations constructor sets 3D locations correctly."""
+        spike_locations = create_mock_spike_locations(ndim=3)
+
+        self.assertEqual(spike_locations.name, "spike_locations")
+        self.assertEqual(spike_locations.data.data.shape, (150, 3))
+
+
+class TestAmplitudeScalingsConstructor(TestCase):
+    """Unit tests for AmplitudeScalings constructor."""
+
+    def test_constructor(self):
+        """Test that AmplitudeScalings constructor sets values correctly."""
+        amplitude_scalings = create_mock_amplitude_scalings()
+
+        self.assertEqual(amplitude_scalings.name, "amplitude_scalings")
+        self.assertEqual(len(amplitude_scalings.data.data), 150)  # 50 + 40 + 60
+
 
 class TestSpikeSortingContainerConstructor(TestCase):
     """Unit tests for SpikeSortingContainer constructor."""
@@ -466,6 +680,381 @@ class TestUnitLocationsRoundtrip(TestCase):
             np.testing.assert_array_almost_equal(
                 read_unit_locations.data[:],
                 unit_locations.data[:],
+            )
+
+
+class TestCorrelogramsRoundtrip(TestCase):
+    """Roundtrip test for Correlograms."""
+
+    def setUp(self):
+        self.nwbfile = set_up_nwbfile()
+        self.path = "test_correlograms.nwb"
+
+    def tearDown(self):
+        remove_test_file(self.path)
+
+    def test_roundtrip(self):
+        """Test writing and reading Correlograms."""
+        electrodes_region = self.nwbfile.create_electrode_table_region(
+            region=list(range(10)),
+            description="all electrodes",
+        )
+        units_region = create_units_region(self.nwbfile)
+
+        correlograms = create_mock_correlograms()
+
+        extensions = SpikeSortingExtensions(name="extensions")
+        extensions.correlograms = correlograms
+
+        container = SpikeSortingContainer(
+            name="spike_sorting",
+            sampling_frequency=30000.0,
+            electrodes=electrodes_region,
+            units_region=units_region,
+        )
+        container.spike_sorting_extensions = extensions
+
+        ecephys_module = self.nwbfile.create_processing_module(
+            name="ecephys",
+            description="Extracellular electrophysiology processing",
+        )
+        ecephys_module.add(container)
+
+        with NWBHDF5IO(self.path, mode="w") as io:
+            io.write(self.nwbfile)
+
+        with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
+            read_nwbfile = io.read()
+            read_container = read_nwbfile.processing["ecephys"]["spike_sorting"]
+            read_extensions = read_container.spike_sorting_extensions
+            read_correlograms = read_extensions.correlograms
+
+            np.testing.assert_array_almost_equal(
+                read_correlograms.data[:],
+                correlograms.data[:],
+            )
+            np.testing.assert_array_almost_equal(
+                read_correlograms.bin_edges[:],
+                correlograms.bin_edges[:],
+            )
+
+
+class TestISIHistogramsRoundtrip(TestCase):
+    """Roundtrip test for ISIHistograms."""
+
+    def setUp(self):
+        self.nwbfile = set_up_nwbfile()
+        self.path = "test_isi_histograms.nwb"
+
+    def tearDown(self):
+        remove_test_file(self.path)
+
+    def test_roundtrip(self):
+        """Test writing and reading ISIHistograms."""
+        electrodes_region = self.nwbfile.create_electrode_table_region(
+            region=list(range(10)),
+            description="all electrodes",
+        )
+        units_region = create_units_region(self.nwbfile)
+
+        isi_histograms = create_mock_isi_histograms()
+
+        extensions = SpikeSortingExtensions(name="extensions")
+        extensions.isi_histograms = isi_histograms
+
+        container = SpikeSortingContainer(
+            name="spike_sorting",
+            sampling_frequency=30000.0,
+            electrodes=electrodes_region,
+            units_region=units_region,
+        )
+        container.spike_sorting_extensions = extensions
+
+        ecephys_module = self.nwbfile.create_processing_module(
+            name="ecephys",
+            description="Extracellular electrophysiology processing",
+        )
+        ecephys_module.add(container)
+
+        with NWBHDF5IO(self.path, mode="w") as io:
+            io.write(self.nwbfile)
+
+        with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
+            read_nwbfile = io.read()
+            read_container = read_nwbfile.processing["ecephys"]["spike_sorting"]
+            read_extensions = read_container.spike_sorting_extensions
+            read_isi_histograms = read_extensions.isi_histograms
+
+            np.testing.assert_array_almost_equal(
+                read_isi_histograms.data[:],
+                isi_histograms.data[:],
+            )
+            np.testing.assert_array_almost_equal(
+                read_isi_histograms.bin_edges[:],
+                isi_histograms.bin_edges[:],
+            )
+
+
+class TestTemplateSimilarityRoundtrip(TestCase):
+    """Roundtrip test for TemplateSimilarity."""
+
+    def setUp(self):
+        self.nwbfile = set_up_nwbfile()
+        self.path = "test_template_similarity.nwb"
+
+    def tearDown(self):
+        remove_test_file(self.path)
+
+    def test_roundtrip(self):
+        """Test writing and reading TemplateSimilarity."""
+        electrodes_region = self.nwbfile.create_electrode_table_region(
+            region=list(range(10)),
+            description="all electrodes",
+        )
+        units_region = create_units_region(self.nwbfile)
+
+        template_similarity = create_mock_template_similarity()
+
+        extensions = SpikeSortingExtensions(name="extensions")
+        extensions.template_similarity = template_similarity
+
+        container = SpikeSortingContainer(
+            name="spike_sorting",
+            sampling_frequency=30000.0,
+            electrodes=electrodes_region,
+            units_region=units_region,
+        )
+        container.spike_sorting_extensions = extensions
+
+        ecephys_module = self.nwbfile.create_processing_module(
+            name="ecephys",
+            description="Extracellular electrophysiology processing",
+        )
+        ecephys_module.add(container)
+
+        with NWBHDF5IO(self.path, mode="w") as io:
+            io.write(self.nwbfile)
+
+        with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
+            read_nwbfile = io.read()
+            read_container = read_nwbfile.processing["ecephys"]["spike_sorting"]
+            read_extensions = read_container.spike_sorting_extensions
+            read_template_similarity = read_extensions.template_similarity
+
+            np.testing.assert_array_almost_equal(
+                read_template_similarity.data[:],
+                template_similarity.data[:],
+            )
+
+
+class TestSpikeAmplitudesRoundtrip(TestCase):
+    """Roundtrip test for SpikeAmplitudes."""
+
+    def setUp(self):
+        self.nwbfile = set_up_nwbfile()
+        self.path = "test_spike_amplitudes.nwb"
+
+    def tearDown(self):
+        remove_test_file(self.path)
+
+    def test_roundtrip(self):
+        """Test writing and reading SpikeAmplitudes."""
+        electrodes_region = self.nwbfile.create_electrode_table_region(
+            region=list(range(10)),
+            description="all electrodes",
+        )
+        units_region = create_units_region(self.nwbfile)
+
+        spike_amplitudes = create_mock_spike_amplitudes()
+
+        extensions = SpikeSortingExtensions(name="extensions")
+        extensions.spike_amplitudes = spike_amplitudes
+
+        container = SpikeSortingContainer(
+            name="spike_sorting",
+            sampling_frequency=30000.0,
+            electrodes=electrodes_region,
+            units_region=units_region,
+        )
+        container.spike_sorting_extensions = extensions
+
+        ecephys_module = self.nwbfile.create_processing_module(
+            name="ecephys",
+            description="Extracellular electrophysiology processing",
+        )
+        ecephys_module.add(container)
+
+        with NWBHDF5IO(self.path, mode="w") as io:
+            io.write(self.nwbfile)
+
+        with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
+            read_nwbfile = io.read()
+            read_container = read_nwbfile.processing["ecephys"]["spike_sorting"]
+            read_extensions = read_container.spike_sorting_extensions
+            read_spike_amplitudes = read_extensions.spike_amplitudes
+
+            np.testing.assert_array_almost_equal(
+                read_spike_amplitudes.data.data[:],
+                spike_amplitudes.data.data[:],
+            )
+            np.testing.assert_array_equal(
+                read_spike_amplitudes.data_index.data[:],
+                spike_amplitudes.data_index.data[:],
+            )
+
+
+class TestSpikeLocationsRoundtrip(TestCase):
+    """Roundtrip test for SpikeLocations."""
+
+    def setUp(self):
+        self.nwbfile = set_up_nwbfile()
+        self.path = "test_spike_locations.nwb"
+
+    def tearDown(self):
+        remove_test_file(self.path)
+
+    def test_roundtrip_2d(self):
+        """Test writing and reading SpikeLocations with 2D data."""
+        electrodes_region = self.nwbfile.create_electrode_table_region(
+            region=list(range(10)),
+            description="all electrodes",
+        )
+        units_region = create_units_region(self.nwbfile)
+
+        spike_locations = create_mock_spike_locations(ndim=2)
+
+        extensions = SpikeSortingExtensions(name="extensions")
+        extensions.spike_locations = spike_locations
+
+        container = SpikeSortingContainer(
+            name="spike_sorting",
+            sampling_frequency=30000.0,
+            electrodes=electrodes_region,
+            units_region=units_region,
+        )
+        container.spike_sorting_extensions = extensions
+
+        ecephys_module = self.nwbfile.create_processing_module(
+            name="ecephys",
+            description="Extracellular electrophysiology processing",
+        )
+        ecephys_module.add(container)
+
+        with NWBHDF5IO(self.path, mode="w") as io:
+            io.write(self.nwbfile)
+
+        with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
+            read_nwbfile = io.read()
+            read_container = read_nwbfile.processing["ecephys"]["spike_sorting"]
+            read_extensions = read_container.spike_sorting_extensions
+            read_spike_locations = read_extensions.spike_locations
+
+            np.testing.assert_array_almost_equal(
+                read_spike_locations.data.data[:],
+                spike_locations.data.data[:],
+            )
+            np.testing.assert_array_equal(
+                read_spike_locations.data_index.data[:],
+                spike_locations.data_index.data[:],
+            )
+
+    def test_roundtrip_3d(self):
+        """Test writing and reading SpikeLocations with 3D data."""
+        self.nwbfile = set_up_nwbfile()
+
+        electrodes_region = self.nwbfile.create_electrode_table_region(
+            region=list(range(10)),
+            description="all electrodes",
+        )
+        units_region = create_units_region(self.nwbfile)
+
+        spike_locations = create_mock_spike_locations(ndim=3)
+
+        extensions = SpikeSortingExtensions(name="extensions")
+        extensions.spike_locations = spike_locations
+
+        container = SpikeSortingContainer(
+            name="spike_sorting",
+            sampling_frequency=30000.0,
+            electrodes=electrodes_region,
+            units_region=units_region,
+        )
+        container.spike_sorting_extensions = extensions
+
+        ecephys_module = self.nwbfile.create_processing_module(
+            name="ecephys",
+            description="Extracellular electrophysiology processing",
+        )
+        ecephys_module.add(container)
+
+        with NWBHDF5IO(self.path, mode="w") as io:
+            io.write(self.nwbfile)
+
+        with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
+            read_nwbfile = io.read()
+            read_container = read_nwbfile.processing["ecephys"]["spike_sorting"]
+            read_extensions = read_container.spike_sorting_extensions
+            read_spike_locations = read_extensions.spike_locations
+
+            np.testing.assert_array_almost_equal(
+                read_spike_locations.data.data[:],
+                spike_locations.data.data[:],
+            )
+
+
+class TestAmplitudeScalingsRoundtrip(TestCase):
+    """Roundtrip test for AmplitudeScalings."""
+
+    def setUp(self):
+        self.nwbfile = set_up_nwbfile()
+        self.path = "test_amplitude_scalings.nwb"
+
+    def tearDown(self):
+        remove_test_file(self.path)
+
+    def test_roundtrip(self):
+        """Test writing and reading AmplitudeScalings."""
+        electrodes_region = self.nwbfile.create_electrode_table_region(
+            region=list(range(10)),
+            description="all electrodes",
+        )
+        units_region = create_units_region(self.nwbfile)
+
+        amplitude_scalings = create_mock_amplitude_scalings()
+
+        extensions = SpikeSortingExtensions(name="extensions")
+        extensions.amplitude_scalings = amplitude_scalings
+
+        container = SpikeSortingContainer(
+            name="spike_sorting",
+            sampling_frequency=30000.0,
+            electrodes=electrodes_region,
+            units_region=units_region,
+        )
+        container.spike_sorting_extensions = extensions
+
+        ecephys_module = self.nwbfile.create_processing_module(
+            name="ecephys",
+            description="Extracellular electrophysiology processing",
+        )
+        ecephys_module.add(container)
+
+        with NWBHDF5IO(self.path, mode="w") as io:
+            io.write(self.nwbfile)
+
+        with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
+            read_nwbfile = io.read()
+            read_container = read_nwbfile.processing["ecephys"]["spike_sorting"]
+            read_extensions = read_container.spike_sorting_extensions
+            read_amplitude_scalings = read_extensions.amplitude_scalings
+
+            np.testing.assert_array_almost_equal(
+                read_amplitude_scalings.data.data[:],
+                amplitude_scalings.data.data[:],
+            )
+            np.testing.assert_array_equal(
+                read_amplitude_scalings.data_index.data[:],
+                amplitude_scalings.data_index.data[:],
             )
 
 
