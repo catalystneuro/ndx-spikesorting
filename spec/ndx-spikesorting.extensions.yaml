@@ -133,7 +133,7 @@ groups:
 - neurodata_type_def: ISIHistograms
   neurodata_type_inc: NWBDataInterface
   default_name: isi_histograms
-  doc: doc: Inter-spike-interval histogram counts for each unit. Each value is the number of consecutive spike pairs whose interval falls within the corresponding bin.    
+  doc: Inter-spike-interval histogram counts for each unit. Each value is the number of consecutive spike pairs whose interval falls within the corresponding bin.    
   datasets:
   - name: data
     dtype: int

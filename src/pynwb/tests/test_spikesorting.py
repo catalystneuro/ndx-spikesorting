@@ -164,7 +164,7 @@ def create_mock_unit_locations_3d(nwbfile: NWBFile, num_units: int = 3):
 
 def create_mock_correlograms(num_units: int = 3, num_bins: int = 50):
     """Create mock Correlograms with random data."""
-    data = np.random.rand(num_units, num_units, num_bins).astype(np.float64)
+    data = np.random.randint(0, 100, size=(num_units, num_units, num_bins))
     bin_edges = np.linspace(-50, 50, num_bins).astype(np.float64)
 
     correlograms = Correlograms(
@@ -177,7 +177,7 @@ def create_mock_correlograms(num_units: int = 3, num_bins: int = 50):
 
 def create_mock_isi_histograms(num_units: int = 3, num_bins: int = 100):
     """Create mock ISIHistograms with random data."""
-    data = np.random.rand(num_units, num_bins).astype(np.float64)
+    data = np.random.randint(0, 100, size=(num_units, num_bins))
     bin_edges = np.linspace(0, 100, num_bins).astype(np.float64)
 
     isi_histograms = ISIHistograms(
