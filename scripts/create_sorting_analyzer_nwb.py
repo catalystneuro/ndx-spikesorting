@@ -244,7 +244,7 @@ nwb_extensions = {}
 spike_vector = sorting_analyzer.sorting.to_spike_vector()
 unit_indices = spike_vector["unit_index"]
 sort_order = np.argsort(unit_indices)
-cumulative_index = np.cumsum(np.nonzero(np.diff(unit_indices[sort_order]) > 0)[0])
+cumulative_index = np.cumsum(np.bincount(unit_indices))
 for extension_name in base_vector_extensions:
     extension = sorting_analyzer.get_extension(extension_name)
     all_data = extension.get_data()[sort_order]
@@ -288,7 +288,7 @@ extensions.amplitude_scalings = nwb_extensions["amplitude_scalings"]
 
 container = SpikeSortingContainer(
     name="spike_sorting",
-    sampling_frequency=recording.get_sampling_frequency(),
+    sampling_frequency=sorting_analyzer.sampling_frequency,
     electrodes=electrodes_region,
     units_region=units_region,
     sparsity_mask=sparsity_mask,

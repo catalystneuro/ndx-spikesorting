@@ -396,9 +396,9 @@ def _load_spike_locations_extension_from_nwb(extensions, sorting_analyzer):
     ext = ext_class(sorting_analyzer)
     # make x, y or x, y, z structured array
     if spike_locations.shape[1] == 2:
-        spike_locations = np.core.records.fromarrays(spike_locations.T, names="x,y")
+        spike_locations = np.rec.fromarrays(spike_locations.T, names="x,y")
     elif spike_locations.shape[1] == 3:
-        spike_locations = np.core.records.fromarrays(spike_locations.T, names="x,y,z")
+        spike_locations = np.rec.fromarrays(spike_locations.T, names="x,y,z")
     ext.set_params()
     ext.data["spike_locations"] = spike_locations
     ext.run_info = {"run_completed": True, "runtime_s": 0.0}

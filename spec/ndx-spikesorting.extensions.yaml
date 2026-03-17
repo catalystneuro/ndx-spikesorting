@@ -116,7 +116,7 @@ groups:
     dims:
     - num_units
     - num_units
-    - num_bins
+    - num_bin_edges
     shape:
     - null
     - null
@@ -125,7 +125,7 @@ groups:
   - name: bin_edges
     dtype: float
     dims:
-    - num_bins
+    - num_bin_edges
     shape:
     - null
     doc: bin edges in ms over which counts are computed.
@@ -136,10 +136,10 @@ groups:
   doc: doc: Inter-spike-interval histogram counts for each unit. Each value is the number of consecutive spike pairs whose interval falls within the corresponding bin.    
   datasets:
   - name: data
-    dtype: float
+    dtype: int
     dims:
     - num_units
-    - num_bins
+    - num_bin_edges
     shape:
     - null
     - null
@@ -147,7 +147,7 @@ groups:
   - name: bin_edges
     dtype: float
     dims:
-    - num_bins
+    - num_bin_edges
     shape:
     - null
     doc: bin edges in ms over which counts are computed.
@@ -162,7 +162,7 @@ groups:
     dtype: float
     dims:
     - num_units
-    - nnum_units
+    - num_units
     shape:
     - null
     - null
