@@ -109,10 +109,10 @@ groups:
 - neurodata_type_def: Correlograms
   neurodata_type_inc: NWBDataInterface
   default_name: correlograms
-  doc: The correlograms for each unit pair. Diagonals are auto-correlograms.
+  doc: Cross-correlogram spike counts for each unit pair. Diagonal entries are auto-correlograms. Each value is the number of spike coincidences within the corresponding time lag bin.
   datasets:
   - name: data
-    dtype: float
+    dtype: int
     dims:
     - num_units
     - num_units
@@ -133,7 +133,7 @@ groups:
 - neurodata_type_def: ISIHistograms
   neurodata_type_inc: NWBDataInterface
   default_name: isi_histograms
-  doc: The inter-spike-interval histograms for each unit
+  doc: doc: Inter-spike-interval histogram counts for each unit. Each value is the number of consecutive spike pairs whose interval falls within the corresponding bin.    
   datasets:
   - name: data
     dtype: float
