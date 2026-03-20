@@ -21,6 +21,4 @@ nwb_path = Path(__file__).parent / "sorting_analyzer_test.nwb"
 
 sorting_analyzer = read_sorting_analyzer_from_nwb(nwb_path)
 
-sorting_analyzer.compute("unit_locations")
-
 run_mainwindow(sorting_analyzer, mode="desktop")

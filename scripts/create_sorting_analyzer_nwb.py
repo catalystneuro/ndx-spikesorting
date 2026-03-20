@@ -23,6 +23,12 @@ from ndx_spikesorting import (
     Templates,
     NoiseLevels,
     UnitLocations,
+    Correlograms,
+    ISIHistograms,
+    TemplateSimilarity,
+    SpikeAmplitudes,
+    SpikeLocations,
+    AmplitudeScalings,
     SpikeSortingContainer,
     SpikeSortingExtensions,
 )
@@ -46,9 +52,16 @@ sorting_analyzer = create_sorting_analyzer(
 sorting_analyzer.compute(
     {
         "random_spikes": {"max_spikes_per_unit": 10, "seed": 42},
+        "waveforms": {},
         "templates": {},
         "noise_levels": {},
         "unit_locations": {"method": "monopolar_triangulation"},
+        "correlograms": {},
+        "isi_histograms": {},
+        "template_similarity": {},
+        "spike_amplitudes": {},
+        "amplitude_scalings": {},
+        "spike_locations": {"method": "grid_convolution"}
     }
 )
 
@@ -82,8 +95,9 @@ units_region = DynamicTableRegion(
     table=nwbfile.units,
 )
 
-# ---- Step 3: Convert random_spikes extension to NWB ----
+# ---- Step 3: Convert extensions to NWB ----
 
+# Random spikes
 random_spikes_ext = sorting_analyzer.get_extension("random_spikes")
 random_spikes_data = random_spikes_ext.get_random_spikes()
 
@@ -124,8 +138,7 @@ nwb_random_spikes = RandomSpikes(
     random_spikes_indices_index=random_spikes_indices_index,
 )
 
-# ---- Step 4: Convert templates extension to NWB ----
-
+# Templates
 templates_ext = sorting_analyzer.get_extension("templates")
 nbefore = templates_ext.nbefore
 
@@ -178,7 +191,7 @@ nwb_templates = Templates(
     electrodes=template_electrodes,
 )
 
-# ---- Step 5: Convert noise_levels extension to NWB ----
+# NoiseLevels
 noise_levels_ext = sorting_analyzer.get_extension("noise_levels")
 noise_levels_data = noise_levels_ext.get_data()
 nwb_noise_levels = NoiseLevels(
@@ -186,7 +199,7 @@ nwb_noise_levels = NoiseLevels(
     data=noise_levels_data,
 )
 
-# ---- Step 6: Convert unit locations extension to NWB ----
+# UnitLocations
 unit_locations_ext = sorting_analyzer.get_extension("unit_locations")
 unit_locations_data = unit_locations_ext.get_data()
 nwb_unit_locations = UnitLocations(
@@ -194,7 +207,70 @@ nwb_unit_locations = UnitLocations(
     data=unit_locations_data,
 )
 
-# ---- Step 7: Assemble the SpikeSortingContainer and write to NWB ----
+# Correlograms
+correlograms_ext = sorting_analyzer.get_extension("correlograms")
+ccgs, bin_edges = correlograms_ext.get_data()
+nwb_correlograms = Correlograms(
+    name="correlograms",
+    data=ccgs,
+    bin_edges=bin_edges
+)
+
+# ISIHistograms
+isi_ext = sorting_analyzer.get_extension("isi_histograms")
+isis, bin_edges = isi_ext.get_data()
+nwb_isi_histograms = ISIHistograms(
+    name="isi_histograms",
+    data=isis,
+    bin_edges=bin_edges
+)
+
+# TemplateSimilarity
+template_similarity_ext = sorting_analyzer.get_extension("template_similarity")
+similarity = template_similarity_ext.get_data()
+nwb_template_similarity = TemplateSimilarity(
+    name="template_similarity",
+    data=similarity,
+)
+
+# SpikeAmplitudes, AmplitudeScalings, SpikeLocations
+base_vector_extensions = ["spike_amplitudes", "spike_locations", "amplitude_scalings"]
+nwb_classes = {
+    "spike_amplitudes": SpikeAmplitudes,
+    "spike_locations": SpikeLocations,
+    "amplitude_scalings": AmplitudeScalings
+}
+nwb_extensions = {}
+spike_vector = sorting_analyzer.sorting.to_spike_vector()
+unit_indices = spike_vector["unit_index"]
+sort_order = np.argsort(unit_indices)
+cumulative_index = np.cumsum(np.bincount(unit_indices))
+for extension_name in base_vector_extensions:
+    extension = sorting_analyzer.get_extension(extension_name)
+    all_data = extension.get_data()[sort_order]
+
+    if all_data.dtype.names is not None:
+        all_data = np.stack([all_data[name] for name in all_data.dtype.names], axis=1)
+
+    data = VectorData(
+        name="data",
+        data=all_data,
+        description=f"{extension_name} data",
+    )
+
+    data_index = VectorIndex(
+        name="data_index",
+        data=np.array(cumulative_index, dtype=np.int64),
+        target=data,
+    )
+    nwb_extensions[extension_name] = nwb_classes[extension_name](
+        name=extension_name,
+        data=data,
+        data_index=data_index
+    )
+
+
+# ---- Step 4: Assemble the SpikeSortingContainer and write to NWB ----
 
 sparsity_mask = sparsity.mask if sparsity is not None else None
 
@@ -203,10 +279,16 @@ extensions.random_spikes = nwb_random_spikes
 extensions.templates = nwb_templates
 extensions.noise_levels = nwb_noise_levels
 extensions.unit_locations = nwb_unit_locations
+extensions.correlograms = nwb_correlograms
+extensions.isi_histograms = nwb_isi_histograms
+extensions.template_similarity = nwb_template_similarity
+extensions.spike_amplitudes = nwb_extensions["spike_amplitudes"]
+extensions.spike_locations = nwb_extensions["spike_locations"]
+extensions.amplitude_scalings = nwb_extensions["amplitude_scalings"]
 
 container = SpikeSortingContainer(
     name="spike_sorting",
-    sampling_frequency=recording.get_sampling_frequency(),
+    sampling_frequency=sorting_analyzer.sampling_frequency,
     electrodes=electrodes_region,
     units_region=units_region,
     sparsity_mask=sparsity_mask,
