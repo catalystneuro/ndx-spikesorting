@@ -116,7 +116,7 @@ groups:
     dims:
     - num_units
     - num_units
-    - num_bin_edges
+    - num_bins
     shape:
     - null
     - null
@@ -139,7 +139,7 @@ groups:
     dtype: int
     dims:
     - num_units
-    - num_bin_edges
+    - num_bins
     shape:
     - null
     - null

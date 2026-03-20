@@ -286,7 +286,7 @@ def _load_unit_locations_extension_from_nwb(extensions, sorting_analyzer):
     ext_class = get_extension_class("unit_locations")
     ext = ext_class(sorting_analyzer)
     ext.set_params()
-    ext.data["unit_locations"] = locations_data.astype(np.float32)
+    ext.data["unit_locations"] = locations_data
     ext.run_info = {"run_completed": True, "runtime_s": 0.0}
     sorting_analyzer.extensions["unit_locations"] = ext
 
@@ -375,6 +375,7 @@ def _load_spike_amplitudes_extension_from_nwb(extensions, sorting_analyzer):
     spike_amplitudes = spike_amplitudes_nwb.data[:][reverse_order]
     ext_class = get_extension_class("spike_amplitudes")
     ext = ext_class(sorting_analyzer)
+    ext.set_params()
     ext.data["amplitudes"] = spike_amplitudes.astype(np.float32)
     ext.run_info = {"run_completed": True, "runtime_s": 0.0}
     sorting_analyzer.extensions["spike_amplitudes"] = ext
