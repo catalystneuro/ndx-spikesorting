@@ -20,6 +20,47 @@ groups:
     doc: Index into random_spikes_indices for each unit. The indices for unit i 
       are random_spikes_indices[random_spikes_indices_index[i-1]:random_spikes_indices_index[i]].
 
+- neurodata_type_def: Waveforms
+  neurodata_type_inc: NWBDataInterface
+  default_name: waveforms
+  doc: Individual spike waveforms organized as a double-ragged array. Each row
+    in data is one channel's waveform for one spike. The first VectorIndex
+    (data_index) groups rows by spike, and the second VectorIndex
+    (data_index_index) groups spikes by unit.
+  datasets:
+  - name: data
+    neurodata_type_inc: VectorData
+    dtype: float32
+    dims:
+    - num_channel_waveforms_total
+    - num_samples
+    shape:
+    - null
+    - null
+    doc: Flattened waveform data. Each row is one channel's waveform for one
+      spike. Shape is (total_channel_waveforms, num_samples).
+    attributes:
+    - name: unit
+      dtype: text
+      default_value: microvolts
+      doc: Unit of measurement for waveform data.
+      required: false
+  - name: data_index
+    neurodata_type_inc: VectorIndex
+    doc: Index into data per spike. Groups channel-waveforms by spike.
+      The waveforms for spike j are data[data_index[j-1]:data_index[j], :].
+  - name: data_index_index
+    neurodata_type_inc: VectorIndex
+    doc: Index into data_index per unit. Groups spikes by unit.
+      The spike indices for unit i are
+      data_index[data_index_index[i-1]:data_index_index[i]].
+  - name: electrodes
+    neurodata_type_inc: DynamicTableRegion
+    doc: Reference to the electrodes table for each row in data. Has the
+      same length as the first dimension of data, identifying the channel
+      for each waveform row.
+
+
 - neurodata_type_def: Templates
   neurodata_type_inc: NWBDataInterface
   default_name: templates
@@ -232,6 +273,48 @@ groups:
     doc: Index into data for each unit. The indices for unit i 
       are data[data_index[i-1]:data_index[i]].
 
+
+- neurodata_type_def: PrincipalComponents
+  neurodata_type_inc: NWBDataInterface
+  default_name: principal_components
+  doc: PCA projections of spikes organized as a double-ragged array. Each row
+    in data is one channel's PCA projection for one spike (per-channel mode) or
+    the concatenated projection across all channels (concatenated mode). The
+    first VectorIndex (data_index) groups rows by spike, and the second
+    VectorIndex (data_index_index) groups spikes by unit. When channels are
+    concatenated (e.g. tetrodes), each spike produces a single row and
+    electrodes is omitted.
+  datasets:
+  - name: data
+    neurodata_type_inc: VectorData
+    dtype: float
+    dims:
+    - num_channel_projections_total
+    - num_components
+    shape:
+    - null
+    - null
+    doc: Flattened PCA projection data. Each row is one channel's projection
+      for one spike (per-channel mode) or the concatenated projection across
+      all channels for one spike (concatenated mode). Shape is
+      (total_rows, num_components).
+  - name: data_index
+    neurodata_type_inc: VectorIndex
+    doc: Index into data per spike. Groups channel-projections by spike.
+      The projections for spike j are data[data_index[j-1]:data_index[j], :].
+  - name: data_index_index
+    neurodata_type_inc: VectorIndex
+    doc: Index into data_index per unit. Groups spikes by unit.
+      The spike indices for unit i are
+      data_index[data_index_index[i-1]:data_index_index[i]].
+  - name: electrodes
+    neurodata_type_inc: DynamicTableRegion
+    doc: Reference to the electrodes table for each row in data. Has the
+      same length as the first dimension of data, identifying the channel
+      for each projection row. Omitted when PCA is computed on concatenated
+      channels.
+    quantity: '?'
+
 - neurodata_type_def: SpikeSortingExtensions
   neurodata_type_inc: NWBDataInterface
   default_name: extensions
@@ -240,6 +323,9 @@ groups:
   groups:
   - neurodata_type_inc: RandomSpikes
     doc: Random spikes extension data.
+    quantity: '?'
+  - neurodata_type_inc: Waveforms
+    doc: Individual spike waveforms (double-ragged).
     quantity: '?'
   - neurodata_type_inc: Templates
     doc: Templates extension data.
@@ -267,6 +353,9 @@ groups:
     quantity: '?'
   - neurodata_type_inc: AmplitudeScalings
     doc: Amplitudes scalings extension data.
+    quantity: '?'
+  - neurodata_type_inc: PrincipalComponents
+    doc: PCA projections of spikes (double-ragged).
     quantity: '?'
 
 - neurodata_type_def: SpikeSortingContainer

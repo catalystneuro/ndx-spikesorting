@@ -4,6 +4,7 @@
 
 ### Features
 
+* Added `Waveforms` and `PrincipalComponents` extensions
 * Added `BaseVectorExtensions` (spike amplitudes, locations, scalings)
 * Added `NoiseLevels` extension
 * Added `UnitLocations` extension
