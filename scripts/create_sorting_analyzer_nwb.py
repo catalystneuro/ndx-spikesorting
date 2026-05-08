@@ -32,6 +32,7 @@ from ndx_spikesorting import (
     AmplitudeScalings,
     PCAProjectionsByChannel,
     PCAProjectionsConcatenated,
+    MetricExtension,
     SpikeSortingContainer,
     SpikeSortingExtensions,
 )
@@ -65,7 +66,10 @@ sorting_analyzer.compute(
         "template_similarity": {},
         "spike_amplitudes": {},
         "amplitude_scalings": {},
-        "spike_locations": {"method": "grid_convolution"}
+        "spike_locations": {"method": "grid_convolution"},
+        "spiketrain_metrics": {},
+        "quality_metrics": {},
+        "template_metrics": {}
     }
 )
 
@@ -81,6 +85,7 @@ nwbfile = NWBFile(
     lab="NWB Extension Test",
     institution="SpikeInterface",
 )
+
 
 add_recording_to_nwbfile(recording, nwbfile=nwbfile, write_as="raw", iterator_type=None)
 add_sorting_to_nwbfile(sorting, nwbfile=nwbfile, write_as="units")
@@ -433,6 +438,40 @@ else:
         waveforms=nwb_waveforms,
     )
 
+# Quality Metrics
+from spikeinterface.metrics.quality.quality_metrics import ComputeQualityMetrics
+from spikeinterface.metrics.template.template_metrics import ComputeTemplateMetrics
+
+metric_extension_names = {
+    "spiketrain_metrics": ComputeSpikeTrainMetrics,
+    "quality_metrics": ComputeQualityMetrics,
+    "template_metrics": ComputeTemplateMetrics,
+}
+
+nwb_metric_extensions = {}
+for ext_name, metric_cls in metric_extension_names.items():
+    si_ext = sorting_analyzer.get_extension(ext_name)
+    if si_ext is None:
+        continue
+    metrics_df = si_ext.get_data()  # pd.DataFrame indexed by unit_id
+    descriptions = metric_cls.get_metric_column_descriptions()
+
+    columns = []
+    for col_name in metrics_df.columns:
+        col_data = metrics_df[col_name].values
+        # Convert to float; NaNs are preserved
+        col_data = col_data.astype(float)
+        col_desc = descriptions.get(col_name, f"Metric column: {col_name}")
+        columns.append(
+            VectorData(name=col_name, data=col_data, description=col_desc)
+        )
+
+    nwb_metric_extensions[ext_name] = MetricExtension(
+        name=ext_name,
+        description=f"Metric table for {ext_name} computed by SpikeInterface.",
+        columns=columns,
+    )
+
 
 # ---- Step 4: Assemble the SpikeSortingContainer and write to NWB ----
 
@@ -454,6 +493,8 @@ if isinstance(nwb_pca, PCAProjectionsByChannel):
     extensions.pca_projections_by_channel = nwb_pca
 else:
     extensions.pca_projections_concatenated = nwb_pca
+for ext_name, nwb_metric_ext in nwb_metric_extensions.items():
+    extensions.add_metric_extensions(nwb_metric_ext)
 
 container = SpikeSortingContainer(
     name="spike_sorting",

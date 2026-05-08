@@ -89,7 +89,7 @@ def read_sorting_analyzer_from_nwb(nwbfile_path: str | Path) -> SortingAnalyzer:
         _load_amplitude_scalings_extension_from_nwb(extensions, sorting_analyzer)
         _load_spike_locations_extension_from_nwb(extensions, sorting_analyzer)
         _load_pca_projections_from_nwb(extensions, sorting_analyzer)
-        
+        _load_metric_extensions_from_nwb(extensions, sorting_analyzer)
 
     return sorting_analyzer
 
@@ -574,6 +574,58 @@ def _load_pca_by_channel_from_nwb(pc_nwb, sorting_analyzer):
     ext.data["pca_projection"] = all_projections
     ext.run_info = {"run_completed": True, "runtime_s": 0.0}
     sorting_analyzer.extensions["principal_components"] = ext
+
+
+def _load_metric_extensions_from_nwb(extensions, sorting_analyzer):
+    """Load MetricExtension tables and instantiate corresponding SI metric extensions.
+
+    Each MetricExtension in NWB is a DynamicTable whose name matches a
+    SpikeInterface metric extension name (e.g., "quality_metrics",
+    "template_metrics", "spiketrain_metrics"). Columns are matched against
+    known BaseMetric subclasses to determine which metrics were computed.
+    """
+    import pandas as pd
+
+    metric_tables = getattr(extensions, "metric_extensions", None)
+    if not metric_tables:
+        return
+
+    for nwb_table in metric_tables.values():
+        table_name = nwb_table.name
+        ext_class = get_extension_class(table_name)
+        if ext_class is None:
+            continue
+
+        unit_ids = sorting_analyzer.unit_ids
+        columns = list(nwb_table.colnames)
+
+        data = {}
+        for col in columns:
+            data[col] = nwb_table[col].data[:]
+
+        metrics_df = pd.DataFrame(data, index=unit_ids)
+
+        # Determine metric_names from columns by matching against known metrics
+        metric_names = []
+        for m in ext_class.metric_list:
+            if all(col in columns for col in m.metric_columns):
+                metric_names.append(m.metric_name)
+
+        # Build params with defaults for matched metrics
+        default_params = ext_class.get_default_metric_params()
+        metric_params = {k: v for k, v in default_params.items() if k in metric_names}
+
+        ext = ext_class(sorting_analyzer)
+        ext.params = {
+            "metric_names": metric_names,
+            "metric_params": metric_params,
+            "metrics_to_compute": metric_names,
+            "delete_existing_metrics": False,
+            "periods": None,
+        }
+        ext.data["metrics"] = metrics_df
+        ext.run_info = {"run_completed": True, "runtime_s": 0.0}
+        sorting_analyzer.extensions[table_name] = ext
 
 
 def _load_pca_concatenated_from_nwb(pc_nwb, sorting_analyzer):

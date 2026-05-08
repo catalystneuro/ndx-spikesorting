@@ -27,6 +27,7 @@ SpikeLocations = get_class("SpikeLocations", "ndx-spikesorting")
 AmplitudeScalings = get_class("AmplitudeScalings", "ndx-spikesorting")
 PCAProjectionsByChannel = get_class("PCAProjectionsByChannel", "ndx-spikesorting")
 PCAProjectionsConcatenated = get_class("PCAProjectionsConcatenated", "ndx-spikesorting")
+MetricExtension = get_class("MetricExtension", "ndx-spikesorting")
 
 SpikeSortingExtensions = get_class("SpikeSortingExtensions", "ndx-spikesorting")
 SpikeSortingContainer = get_class("SpikeSortingContainer", "ndx-spikesorting")
@@ -47,6 +48,7 @@ __all__ = [
     "AmplitudeScalings",
     "PCAProjectionsByChannel",
     "PCAProjectionsConcatenated",
+    "MetricExtension",
     "SpikeSortingExtensions",
     "SpikeSortingContainer",
     "templates_to_dense",
