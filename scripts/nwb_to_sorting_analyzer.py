@@ -78,6 +78,7 @@ def read_sorting_analyzer_from_nwb(nwbfile_path: str | Path) -> SortingAnalyzer:
     extensions = container.spike_sorting_extensions
     if extensions is not None:
         _load_random_spikes_extension_from_nwb(extensions, sorting_analyzer)
+        _load_waveforms_extension_from_nwb(extensions, sorting_analyzer)
         _load_templates_extension_from_nwb(extensions, sorting_analyzer)
         _load_noise_levels_extension_from_nwb(extensions, sorting_analyzer)
         _load_unit_locations_extension_from_nwb(extensions, sorting_analyzer)
@@ -87,6 +88,7 @@ def read_sorting_analyzer_from_nwb(nwbfile_path: str | Path) -> SortingAnalyzer:
         _load_spike_amplitudes_extension_from_nwb(extensions, sorting_analyzer)
         _load_amplitude_scalings_extension_from_nwb(extensions, sorting_analyzer)
         _load_spike_locations_extension_from_nwb(extensions, sorting_analyzer)
+        _load_pca_projections_from_nwb(extensions, sorting_analyzer)
         
 
     return sorting_analyzer
@@ -424,3 +426,190 @@ def _load_amplitude_scalings_extension_from_nwb(extensions, sorting_analyzer):
     ext.data["amplitude_scalings"] = amplitude_scalings.astype(np.float32)
     ext.run_info = {"run_completed": True, "runtime_s": 0.0}
     sorting_analyzer.extensions["amplitude_scalings"] = ext
+
+
+def _load_waveforms_extension_from_nwb(extensions, sorting_analyzer):
+    """Instantiate the waveforms extension if present in the NWB container.
+
+    **NWB** stores waveforms as a double-ragged array:
+
+    - ``data``: shape ``(total_channel_waveforms, num_samples)`` — one row per
+      channel per spike, flattened across all spikes and units.
+    - ``data_index``: VectorIndex grouping rows by spike.
+    - ``data_index_index``: VectorIndex grouping spikes by unit.
+    - ``electrodes``: identifies the channel for each row.
+
+    **SpikeInterface** stores waveforms as a single flat array
+    ``ext.data["waveforms"]`` with shape
+    ``(num_random_spikes, num_samples, max_sparse_channels)`` indexed by
+    the random_spikes extension's spike ordering. Per-unit data is extracted
+    at access time via ``some_spikes["unit_index"] == unit_index`` mask.
+
+    The conversion:
+    1. Parses the double-ragged NWB into per-unit arrays
+    2. Allocates a flat zero-filled array of shape
+       ``(total_spikes, num_samples, max_sparse_channels)``
+    3. Uses the ``some_spikes`` unit_index mask to place each unit's
+       waveforms at the correct positions (left-aligned in channel dim)
+    """
+    waveforms_nwb = extensions.waveforms
+    if waveforms_nwb is None:
+        return
+
+    sparse_data = waveforms_nwb.data.data[:]  # (total_rows, num_samples)
+    data_index = waveforms_nwb.data_index.data[:]  # per-spike boundaries
+    data_index_index = waveforms_nwb.data_index_index.data[:]  # per-unit boundaries
+    num_samples = sparse_data.shape[1]
+    num_units = len(data_index_index)
+
+    # Step 1: Parse double-ragged NWB into per-unit waveforms
+    per_unit_waveforms = []
+    max_sparse_channels = 0
+    for unit_idx in range(num_units):
+        spike_start = 0 if unit_idx == 0 else int(data_index_index[unit_idx - 1])
+        spike_end = int(data_index_index[unit_idx])
+
+        unit_waveforms = []
+        for spike_idx in range(spike_start, spike_end):
+            row_start = 0 if spike_idx == 0 else int(data_index[spike_idx - 1])
+            row_end = int(data_index[spike_idx])
+            n_channels = row_end - row_start
+            max_sparse_channels = max(max_sparse_channels, n_channels)
+            # rows: (n_channels, n_samples) -> transpose to (n_samples, n_channels)
+            spike_wf = sparse_data[row_start:row_end, :].T
+            unit_waveforms.append(spike_wf)
+
+        if unit_waveforms:
+            per_unit_waveforms.append(np.stack(unit_waveforms))  # (n_spikes, n_samples, n_channels_unit)
+        else:
+            per_unit_waveforms.append(np.empty((0, num_samples, 0), dtype=sparse_data.dtype))
+
+    # Step 2: Build flat array using some_spikes ordering
+    some_spikes = sorting_analyzer.get_extension("random_spikes").get_random_spikes()
+    total_spikes = len(some_spikes)
+    all_waveforms = np.zeros((total_spikes, num_samples, max_sparse_channels), dtype=np.float32)
+
+    for unit_idx in range(num_units):
+        spike_mask = some_spikes["unit_index"] == unit_idx
+        unit_wfs = per_unit_waveforms[unit_idx]
+        if unit_wfs.shape[0] > 0:
+            n_ch = unit_wfs.shape[2]
+            all_waveforms[spike_mask, :, :n_ch] = unit_wfs
+
+    ext_class = get_extension_class("waveforms")
+    ext = ext_class(sorting_analyzer)
+    ext.set_params()
+    ext.data["waveforms"] = all_waveforms
+    ext.run_info = {"run_completed": True, "runtime_s": 0.0}
+    sorting_analyzer.extensions["waveforms"] = ext
+
+
+def _load_pca_projections_from_nwb(extensions, sorting_analyzer):
+    """Instantiate the principal_components extension from PCA projection types.
+
+    Checks for both ``PCAProjectionsByChannel`` (per-channel mode, double-ragged)
+    and ``PCAProjectionsChannelsConcatenated`` (concatenated mode, single-ragged).
+    """
+    by_channel_nwb = getattr(extensions, "pca_projections_by_channel", None)
+    concatenated_nwb = getattr(extensions, "pca_projections_concatenated", None)
+
+    if by_channel_nwb is not None:
+        _load_pca_by_channel_from_nwb(by_channel_nwb, sorting_analyzer)
+    elif concatenated_nwb is not None:
+        _load_pca_concatenated_from_nwb(concatenated_nwb, sorting_analyzer)
+
+
+def _load_pca_by_channel_from_nwb(pc_nwb, sorting_analyzer):
+    """Load per-channel PCA projections (PCAProjectionsByChannel).
+
+    **NWB** stores projections as a double-ragged array:
+    - ``data``: shape ``(total_channel_projections, num_components)``
+    - ``data_index``: VectorIndex grouping rows by spike
+    - ``data_index_index``: VectorIndex grouping spikes by unit
+    - ``electrodes``: identifies the channel for each row
+
+    **SpikeInterface** stores ``ext.data["pca_projection"]`` with shape
+    ``(num_random_spikes, n_components, max_sparse_channels)``.
+    """
+    pc_data = pc_nwb.data.data[:]
+    data_index = pc_nwb.data_index.data[:]
+    data_index_index = pc_nwb.data_index_index.data[:]
+    num_units = len(data_index_index)
+    num_components = pc_data.shape[1]
+
+    per_unit_projections = []
+    max_sparse_channels = 0
+    for unit_idx in range(num_units):
+        spike_start = 0 if unit_idx == 0 else int(data_index_index[unit_idx - 1])
+        spike_end = int(data_index_index[unit_idx])
+
+        unit_projections = []
+        for spike_idx in range(spike_start, spike_end):
+            row_start = 0 if spike_idx == 0 else int(data_index[spike_idx - 1])
+            row_end = int(data_index[spike_idx])
+            n_channels = row_end - row_start
+            max_sparse_channels = max(max_sparse_channels, n_channels)
+            spike_pc = pc_data[row_start:row_end, :].T  # (n_channels, n_components) -> (n_components, n_channels)
+            unit_projections.append(spike_pc)
+
+        if unit_projections:
+            per_unit_projections.append(np.stack(unit_projections))
+        else:
+            per_unit_projections.append(np.empty((0, num_components, 0), dtype=pc_data.dtype))
+
+    some_spikes = sorting_analyzer.get_extension("random_spikes").get_random_spikes()
+    total_spikes = len(some_spikes)
+    all_projections = np.zeros((total_spikes, num_components, max_sparse_channels), dtype=np.float64)
+
+    for unit_idx in range(num_units):
+        spike_mask = some_spikes["unit_index"] == unit_idx
+        unit_pcs = per_unit_projections[unit_idx]
+        if unit_pcs.shape[0] > 0:
+            n_ch = unit_pcs.shape[2]
+            all_projections[spike_mask, :, :n_ch] = unit_pcs
+
+    ext_class = get_extension_class("principal_components")
+    ext = ext_class(sorting_analyzer)
+    ext.set_params(n_components=num_components, mode="by_channel_local")
+    ext.data["pca_projection"] = all_projections
+    ext.run_info = {"run_completed": True, "runtime_s": 0.0}
+    sorting_analyzer.extensions["principal_components"] = ext
+
+
+def _load_pca_concatenated_from_nwb(pc_nwb, sorting_analyzer):
+    """Load concatenated PCA projections (PCAProjectionsChannelsConcatenated).
+
+    **NWB** stores projections as a single-ragged array:
+    - ``data``: shape ``(total_spikes, num_components)``
+    - ``data_index``: VectorIndex grouping spikes by unit
+
+    **SpikeInterface** stores ``ext.data["pca_projection"]`` with shape
+    ``(num_random_spikes, n_components)``.
+    """
+    pc_data = pc_nwb.data.data[:]
+    data_index = pc_nwb.data_index.data[:]
+    num_units = len(data_index)
+    num_components = pc_data.shape[1]
+
+    per_unit_projections = []
+    for unit_idx in range(num_units):
+        start = 0 if unit_idx == 0 else int(data_index[unit_idx - 1])
+        end = int(data_index[unit_idx])
+        per_unit_projections.append(pc_data[start:end])
+
+    some_spikes = sorting_analyzer.get_extension("random_spikes").get_random_spikes()
+    total_spikes = len(some_spikes)
+    all_projections = np.zeros((total_spikes, num_components), dtype=np.float64)
+
+    for unit_idx in range(num_units):
+        spike_mask = some_spikes["unit_index"] == unit_idx
+        unit_pcs = per_unit_projections[unit_idx]
+        if unit_pcs.shape[0] > 0:
+            all_projections[spike_mask] = unit_pcs
+
+    ext_class = get_extension_class("principal_components")
+    ext = ext_class(sorting_analyzer)
+    ext.set_params(n_components=num_components, mode="concatenated")
+    ext.data["pca_projection"] = all_projections
+    ext.run_info = {"run_completed": True, "runtime_s": 0.0}
+    sorting_analyzer.extensions["principal_components"] = ext

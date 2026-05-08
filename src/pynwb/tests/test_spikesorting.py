@@ -11,6 +11,7 @@ from hdmf.common import VectorData, VectorIndex, DynamicTableRegion
 
 from ndx_spikesorting import (
     RandomSpikes,
+    Waveforms,
     Templates,
     NoiseLevels,
     UnitLocations,
@@ -20,6 +21,8 @@ from ndx_spikesorting import (
     SpikeAmplitudes,
     AmplitudeScalings,
     SpikeLocations,
+    PCAProjectionsByChannel,
+    PCAProjectionsConcatenated,
     SpikeSortingExtensions,
     SpikeSortingContainer,
 )
@@ -84,6 +87,78 @@ def create_mock_random_spikes(num_units: int = 3, spikes_per_unit: list = None):
         random_spikes_indices_index=random_spikes_indices_index,
     )
     return random_spikes
+
+def create_mock_waveforms(nwbfile: NWBFile, num_units: int = 3, num_samples: int = 60,
+                          spikes_per_unit: list = None, channels_per_unit: list = None,
+                          peak_sample_index: int = 20, random_spikes: RandomSpikes = None):
+    """Create mock Waveforms with double-ragged array structure.
+
+    Each unit can have a different number of spikes and each unit can have
+    different channels, making the data doubly ragged.
+    """
+    if spikes_per_unit is None:
+        spikes_per_unit = [3, 2, 4]
+    if channels_per_unit is None:
+        channels_per_unit = [[0, 1, 2], [1, 2, 3, 4], [2, 3]]
+    if random_spikes is None:
+        random_spikes = create_mock_random_spikes(num_units=num_units, spikes_per_unit=spikes_per_unit)
+
+    all_data_rows = []
+    all_electrode_indices = []
+    spike_cumulative = []  # data_index: cumulative row count per spike
+    unit_cumulative = []   # data_index_index: cumulative spike count per unit
+
+    total_spikes = 0
+    running_row_count = 0
+    for unit_idx, (n_spikes, unit_channels) in enumerate(zip(spikes_per_unit, channels_per_unit)):
+        n_channels = len(unit_channels)
+        for spike_idx in range(n_spikes):
+            waveform = np.random.randn(n_channels, num_samples).astype(np.float32)
+            all_data_rows.append(waveform)
+            all_electrode_indices.extend(unit_channels)
+            running_row_count += n_channels
+            spike_cumulative.append(running_row_count)
+        total_spikes += n_spikes
+        unit_cumulative.append(total_spikes)
+
+    data_array = np.vstack(all_data_rows).astype(np.float32)
+
+    data = VectorData(
+        name="data",
+        data=data_array,
+        description="Waveform data (one row per channel per spike)",
+    )
+
+    data_index = VectorIndex(
+        name="data_index",
+        data=np.array(spike_cumulative, dtype=np.int64),
+        target=data,
+    )
+
+    data_index_index = VectorIndex(
+        name="data_index_index",
+        data=np.array(unit_cumulative, dtype=np.int64),
+        target=data_index,
+    )
+
+    electrodes = DynamicTableRegion(
+        name="electrodes",
+        data=list(int(i) for i in all_electrode_indices),
+        description="Electrode for each waveform row.",
+        table=nwbfile.electrodes,
+    )
+
+    waveforms = Waveforms(
+        name="waveforms",
+        peak_sample_index=peak_sample_index,
+        data=data,
+        data_index=data_index,
+        data_index_index=data_index_index,
+        electrodes=electrodes,
+        random_spikes=random_spikes,
+    )
+    return waveforms
+
 
 def create_mock_noise_levels(num_channels: int = 120):
     """Create mock NoiseLevels with random noise values."""
@@ -295,6 +370,118 @@ def create_mock_amplitude_scalings(num_units: int = 3, spikes_per_unit: list = N
     return amplitude_scalings
 
 
+def create_mock_pca_projections_by_channel(nwbfile: NWBFile, num_units: int = 3, num_components: int = 5,
+                                     spikes_per_unit: list = None, channels_per_unit: list = None,
+                                     waveforms: Waveforms = None):
+    """Create mock PCAProjectionsByChannel with double-ragged array structure."""
+    if spikes_per_unit is None:
+        spikes_per_unit = [3, 2, 4]
+    if channels_per_unit is None:
+        channels_per_unit = [[0, 1, 2], [1, 2, 3, 4], [2, 3]]
+    if waveforms is None:
+        waveforms = create_mock_waveforms(
+            nwbfile, num_units=num_units, spikes_per_unit=spikes_per_unit,
+            channels_per_unit=channels_per_unit,
+        )
+
+    all_data_rows = []
+    all_electrode_indices = []
+    spike_cumulative = []
+    unit_cumulative = []
+
+    total_spikes = 0
+    running_row_count = 0
+    for unit_idx, (n_spikes, unit_channels) in enumerate(zip(spikes_per_unit, channels_per_unit)):
+        n_channels = len(unit_channels)
+        for spike_idx in range(n_spikes):
+            projections = np.random.randn(n_channels, num_components).astype(np.float64)
+            all_data_rows.append(projections)
+            all_electrode_indices.extend(unit_channels)
+            running_row_count += n_channels
+            spike_cumulative.append(running_row_count)
+        total_spikes += n_spikes
+        unit_cumulative.append(total_spikes)
+
+    data_array = np.vstack(all_data_rows)
+
+    data = VectorData(
+        name="data",
+        data=data_array,
+        description="PCA projections (one row per channel per spike)",
+    )
+
+    data_index = VectorIndex(
+        name="data_index",
+        data=np.array(spike_cumulative, dtype=np.int64),
+        target=data,
+    )
+
+    data_index_index = VectorIndex(
+        name="data_index_index",
+        data=np.array(unit_cumulative, dtype=np.int64),
+        target=data_index,
+    )
+
+    electrodes = DynamicTableRegion(
+        name="electrodes",
+        data=list(int(i) for i in all_electrode_indices),
+        description="Electrode for each projection row.",
+        table=nwbfile.electrodes,
+    )
+
+    principal_components = PCAProjectionsByChannel(
+        name="pca_projections_by_channel",
+        data=data,
+        data_index=data_index,
+        data_index_index=data_index_index,
+        electrodes=electrodes,
+        waveforms=waveforms,
+    )
+    return principal_components
+
+
+def create_mock_pca_projections_concatenated(nwbfile: NWBFile = None, num_units: int = 3, num_components: int = 5,
+                                                   spikes_per_unit: list = None,
+                                                   waveforms: Waveforms = None):
+    """Create mock PCAProjectionsChannelsConcatenated (no electrodes)."""
+    if spikes_per_unit is None:
+        spikes_per_unit = [3, 2, 4]
+    if waveforms is None and nwbfile is not None:
+        waveforms = create_mock_waveforms(nwbfile, num_units=num_units, spikes_per_unit=spikes_per_unit)
+
+    all_data_rows = []
+    unit_cumulative = []
+
+    total_spikes = 0
+    for n_spikes in spikes_per_unit:
+        unit_data = np.random.randn(n_spikes, num_components).astype(np.float64)
+        all_data_rows.append(unit_data)
+        total_spikes += n_spikes
+        unit_cumulative.append(total_spikes)
+
+    data_array = np.vstack(all_data_rows)
+
+    data = VectorData(
+        name="data",
+        data=data_array,
+        description="PCA projections (concatenated channels, one row per spike)",
+    )
+
+    data_index = VectorIndex(
+        name="data_index",
+        data=np.array(unit_cumulative, dtype=np.int64),
+        target=data,
+    )
+
+    pca_projections = PCAProjectionsConcatenated(
+        name="pca_projections_concatenated",
+        data=data,
+        data_index=data_index,
+        waveforms=waveforms,
+    )
+    return pca_projections
+
+
 class TestRandomSpikesConstructor(TestCase):
     """Unit tests for RandomSpikes constructor."""
 
@@ -304,6 +491,26 @@ class TestRandomSpikesConstructor(TestCase):
 
         self.assertEqual(random_spikes.name, "random_spikes")
         self.assertEqual(len(random_spikes.random_spikes_indices.data), 33)  # 10 + 15 + 8
+
+
+class TestWaveformsConstructor(TestCase):
+    """Unit tests for Waveforms constructor (double-ragged)."""
+
+    def test_constructor(self):
+        """Test that Waveforms constructor sets values correctly."""
+        nwbfile = set_up_nwbfile()
+        waveforms = create_mock_waveforms(nwbfile)
+
+        self.assertEqual(waveforms.name, "waveforms")
+        # spikes_per_unit=[3,2,4] => 9 total spikes
+        self.assertEqual(len(waveforms.data_index.data), 9)
+        # unit_cumulative => [3, 5, 9]
+        self.assertEqual(len(waveforms.data_index_index.data), 3)
+        # channels_per_unit=[3,4,2], spikes=[3,2,4]
+        # total rows = 3*3 + 2*4 + 4*2 = 9+8+8 = 25
+        self.assertEqual(waveforms.data.data.shape[0], 25)
+        self.assertEqual(waveforms.data.data.shape[1], 60)
+        self.assertEqual(len(waveforms.electrodes.data), 25)
 
 class TestNoiseLevelsConstructor(TestCase):
     """Unit tests for NoiseLevels constructor."""
@@ -425,6 +632,41 @@ class TestAmplitudeScalingsConstructor(TestCase):
         self.assertEqual(len(amplitude_scalings.data.data), 150)  # 50 + 40 + 60
 
 
+class TestPCAProjectionsByChannelConstructor(TestCase):
+    """Unit tests for PCAProjectionsByChannel constructor (double-ragged)."""
+
+    def test_constructor(self):
+        """Test that PCAProjectionsByChannel constructor sets values correctly."""
+        nwbfile = set_up_nwbfile()
+        pc = create_mock_pca_projections_by_channel(nwbfile)
+
+        self.assertEqual(pc.name, "pca_projections_by_channel")
+        # spikes_per_unit=[3,2,4] => 9 total spikes
+        self.assertEqual(len(pc.data_index.data), 9)
+        # unit_cumulative => [3, 5, 9]
+        self.assertEqual(len(pc.data_index_index.data), 3)
+        # channels_per_unit=[3,4,2], spikes=[3,2,4]
+        # total rows = 3*3 + 2*4 + 4*2 = 9+8+8 = 25
+        self.assertEqual(pc.data.data.shape[0], 25)
+        self.assertEqual(pc.data.data.shape[1], 5)  # num_components
+        self.assertEqual(len(pc.electrodes.data), 25)
+
+
+class TestPCAProjectionsConcatenatedConstructor(TestCase):
+    """Unit tests for PCAProjectionsChannelsConcatenated constructor."""
+
+    def test_constructor(self):
+        """Test PCAProjectionsChannelsConcatenated sets values correctly."""
+        nwbfile = set_up_nwbfile()
+        pc = create_mock_pca_projections_concatenated(nwbfile)
+
+        self.assertEqual(pc.name, "pca_projections_concatenated")
+        # 9 total spikes
+        self.assertEqual(pc.data.data.shape, (9, 5))
+        # 3 units
+        self.assertEqual(len(pc.data_index.data), 3)
+
+
 class TestSpikeSortingContainerConstructor(TestCase):
     """Unit tests for SpikeSortingContainer constructor."""
 
@@ -522,6 +764,73 @@ class TestRandomSpikesRoundtrip(TestCase):
                 read_random_spikes.random_spikes_indices.data[:],
                 random_spikes.random_spikes_indices.data[:],
             )
+
+
+class TestWaveformsRoundtrip(TestCase):
+    """Roundtrip test for Waveforms (double-ragged)."""
+
+    def setUp(self):
+        self.nwbfile = set_up_nwbfile()
+        self.path = "test_waveforms.nwb"
+
+    def tearDown(self):
+        remove_test_file(self.path)
+
+    def test_roundtrip(self):
+        """Test writing and reading Waveforms with double-ragged array."""
+        electrodes_region = self.nwbfile.create_electrode_table_region(
+            region=list(range(10)),
+            description="all electrodes",
+        )
+        units_region = create_units_region(self.nwbfile)
+
+        random_spikes = create_mock_random_spikes()
+        waveforms = create_mock_waveforms(self.nwbfile, random_spikes=random_spikes)
+
+        extensions = SpikeSortingExtensions(name="extensions")
+        extensions.random_spikes = random_spikes
+        extensions.waveforms = waveforms
+
+        container = SpikeSortingContainer(
+            name="spike_sorting",
+            sampling_frequency=30000.0,
+            electrodes=electrodes_region,
+            units_region=units_region,
+        )
+        container.spike_sorting_extensions = extensions
+
+        ecephys_module = self.nwbfile.create_processing_module(
+            name="ecephys",
+            description="Extracellular electrophysiology processing",
+        )
+        ecephys_module.add(container)
+
+        with NWBHDF5IO(self.path, mode="w") as io:
+            io.write(self.nwbfile)
+
+        with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
+            read_nwbfile = io.read()
+            read_container = read_nwbfile.processing["ecephys"]["spike_sorting"]
+            read_extensions = read_container.spike_sorting_extensions
+            read_waveforms = read_extensions.waveforms
+
+            np.testing.assert_array_almost_equal(
+                read_waveforms.data.data[:],
+                waveforms.data.data[:],
+            )
+            np.testing.assert_array_equal(
+                read_waveforms.data_index.data[:],
+                waveforms.data_index.data[:],
+            )
+            np.testing.assert_array_equal(
+                read_waveforms.data_index_index.data[:],
+                waveforms.data_index_index.data[:],
+            )
+            np.testing.assert_array_equal(
+                read_waveforms.electrodes.data[:],
+                waveforms.electrodes.data[:],
+            )
+
 
 class TestNoiseLevelsRoundtrip(TestCase):
     """Roundtrip test for NoiseLevels."""
@@ -1058,6 +1367,134 @@ class TestAmplitudeScalingsRoundtrip(TestCase):
             )
 
 
+class TestPCAProjectionsByChannelRoundtrip(TestCase):
+    """Roundtrip test for PCAProjectionsByChannel (double-ragged)."""
+
+    def setUp(self):
+        self.nwbfile = set_up_nwbfile()
+        self.path = "test_pca_by_channel.nwb"
+
+    def tearDown(self):
+        remove_test_file(self.path)
+
+    def test_roundtrip(self):
+        """Test writing and reading PCAProjectionsByChannel with double-ragged array."""
+        electrodes_region = self.nwbfile.create_electrode_table_region(
+            region=list(range(10)),
+            description="all electrodes",
+        )
+        units_region = create_units_region(self.nwbfile)
+
+        random_spikes = create_mock_random_spikes()
+        waveforms = create_mock_waveforms(self.nwbfile, random_spikes=random_spikes)
+        pc = create_mock_pca_projections_by_channel(self.nwbfile, waveforms=waveforms)
+
+        extensions = SpikeSortingExtensions(name="extensions")
+        extensions.random_spikes = random_spikes
+        extensions.waveforms = waveforms
+        extensions.pca_projections_by_channel = pc
+
+        container = SpikeSortingContainer(
+            name="spike_sorting",
+            sampling_frequency=30000.0,
+            electrodes=electrodes_region,
+            units_region=units_region,
+        )
+        container.spike_sorting_extensions = extensions
+
+        ecephys_module = self.nwbfile.create_processing_module(
+            name="ecephys",
+            description="Extracellular electrophysiology processing",
+        )
+        ecephys_module.add(container)
+
+        with NWBHDF5IO(self.path, mode="w") as io:
+            io.write(self.nwbfile)
+
+        with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
+            read_nwbfile = io.read()
+            read_container = read_nwbfile.processing["ecephys"]["spike_sorting"]
+            read_extensions = read_container.spike_sorting_extensions
+            read_pc = read_extensions.pca_projections_by_channel
+
+            np.testing.assert_array_almost_equal(
+                read_pc.data.data[:],
+                pc.data.data[:],
+            )
+            np.testing.assert_array_equal(
+                read_pc.data_index.data[:],
+                pc.data_index.data[:],
+            )
+            np.testing.assert_array_equal(
+                read_pc.data_index_index.data[:],
+                pc.data_index_index.data[:],
+            )
+            np.testing.assert_array_equal(
+                read_pc.electrodes.data[:],
+                pc.electrodes.data[:],
+            )
+
+
+class TestPCAProjectionsConcatenatedRoundtrip(TestCase):
+    """Roundtrip test for PCAProjectionsChannelsConcatenated."""
+
+    def setUp(self):
+        self.nwbfile = set_up_nwbfile()
+        self.path = "test_pca_concatenated.nwb"
+
+    def tearDown(self):
+        remove_test_file(self.path)
+
+    def test_roundtrip(self):
+        """Test roundtrip for PCAProjectionsChannelsConcatenated."""
+        electrodes_region = self.nwbfile.create_electrode_table_region(
+            region=list(range(10)),
+            description="all electrodes",
+        )
+        units_region = create_units_region(self.nwbfile)
+
+        random_spikes = create_mock_random_spikes()
+        waveforms = create_mock_waveforms(self.nwbfile, random_spikes=random_spikes)
+        pc = create_mock_pca_projections_concatenated(self.nwbfile, waveforms=waveforms)
+
+        extensions = SpikeSortingExtensions(name="extensions")
+        extensions.random_spikes = random_spikes
+        extensions.waveforms = waveforms
+        extensions.pca_projections_concatenated = pc
+
+        container = SpikeSortingContainer(
+            name="spike_sorting",
+            sampling_frequency=30000.0,
+            electrodes=electrodes_region,
+            units_region=units_region,
+        )
+        container.spike_sorting_extensions = extensions
+
+        ecephys_module = self.nwbfile.create_processing_module(
+            name="ecephys",
+            description="Extracellular electrophysiology processing",
+        )
+        ecephys_module.add(container)
+
+        with NWBHDF5IO(self.path, mode="w") as io:
+            io.write(self.nwbfile)
+
+        with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
+            read_nwbfile = io.read()
+            read_container = read_nwbfile.processing["ecephys"]["spike_sorting"]
+            read_extensions = read_container.spike_sorting_extensions
+            read_pc = read_extensions.pca_projections_concatenated
+
+            np.testing.assert_array_almost_equal(
+                read_pc.data.data[:],
+                pc.data.data[:],
+            )
+            np.testing.assert_array_equal(
+                read_pc.data_index.data[:],
+                pc.data_index.data[:],
+            )
+
+
 class TestSpikeSortingContainerRoundtrip(TestCase):
     """Full roundtrip test for SpikeSortingContainer with all components."""
 
@@ -1079,6 +1516,8 @@ class TestSpikeSortingContainerRoundtrip(TestCase):
         random_spikes = create_mock_random_spikes()
         noise_levels = create_mock_noise_levels()
         templates = create_mock_templates(self.nwbfile)
+        waveforms = create_mock_waveforms(self.nwbfile, random_spikes=random_spikes)
+        pca = create_mock_pca_projections_by_channel(self.nwbfile, waveforms=waveforms)
 
         num_units = 3
         num_channels = 10
@@ -1089,8 +1528,10 @@ class TestSpikeSortingContainerRoundtrip(TestCase):
 
         extensions = SpikeSortingExtensions(name="extensions")
         extensions.random_spikes = random_spikes
+        extensions.waveforms = waveforms
         extensions.templates = templates
         extensions.noise_levels = noise_levels
+        extensions.pca_projections_by_channel = pca
         container = SpikeSortingContainer(
             name="spike_sorting",
             sampling_frequency=30000.0,
@@ -1128,6 +1569,21 @@ class TestSpikeSortingContainerRoundtrip(TestCase):
 
             read_noise_levels = read_extensions.noise_levels
             self.assertIsNotNone(read_noise_levels)
+
+            read_waveforms = read_extensions.waveforms
+            self.assertIsNotNone(read_waveforms)
+            self.assertEqual(read_waveforms.peak_sample_index, 20)
+            np.testing.assert_array_almost_equal(
+                read_waveforms.data.data[:],
+                waveforms.data.data[:],
+            )
+
+            read_pca = read_extensions.pca_projections_by_channel
+            self.assertIsNotNone(read_pca)
+            np.testing.assert_array_almost_equal(
+                read_pca.data.data[:],
+                pca.data.data[:],
+            )
 
 
 class TestSpikeSortingContainerRoundtripPyNWB(NWBH5IOFlexMixin, TestCase):
