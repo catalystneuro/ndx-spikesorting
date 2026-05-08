@@ -396,6 +396,89 @@ def _convert_pca_concatenated(
 
 
 # ---------------------------------------------------------------------------
+# Extension assembly helpers
+# ---------------------------------------------------------------------------
+
+
+def _convert_pca(sorting_analyzer, nwbfile, nwb_waveforms):
+    """Convert PCA extension, returning a dict with the correct attribute key."""
+    pc_ext = sorting_analyzer.get_extension("principal_components")
+    pc_mode = pc_ext.params.get("mode", "by_channel_local")
+    if pc_mode in ("by_channel_local", "by_channel_global"):
+        return {"pca_projections_by_channel": _convert_pca_by_channel(sorting_analyzer, nwbfile, nwb_waveforms)}
+    return {"pca_projections_concatenated": _convert_pca_concatenated(sorting_analyzer, nwb_waveforms)}
+
+
+def _convert_all_extensions(sorting_analyzer, nwbfile):
+    """Convert computed SortingAnalyzer extensions to NWB objects.
+
+    Returns a dict mapping attribute names on ``SpikeSortingExtensions``
+    to the converted NWB objects.
+    """
+
+    def _has(name: str) -> bool:
+        return sorting_analyzer.get_extension(name) is not None
+
+    converted = {}
+
+    if _has("random_spikes"):
+        converted["random_spikes"] = _convert_random_spikes(sorting_analyzer)
+
+    templates_ext = sorting_analyzer.get_extension("templates")
+    if templates_ext is not None:
+        converted["templates"] = _convert_templates(sorting_analyzer, nwbfile)
+    nbefore = templates_ext.nbefore if templates_ext is not None else None
+
+    if _has("waveforms"):
+        if "random_spikes" not in converted:
+            raise ValueError("Waveforms extension requires random_spikes to be computed.")
+        if nbefore is None:
+            raise ValueError("Waveforms extension requires templates to be computed (for nbefore).")
+        converted["waveforms"] = _convert_waveforms(
+            sorting_analyzer, nwbfile, converted["random_spikes"], nbefore
+        )
+
+    if _has("noise_levels"):
+        converted["noise_levels"] = _convert_noise_levels(sorting_analyzer)
+    if _has("unit_locations"):
+        converted["unit_locations"] = _convert_unit_locations(sorting_analyzer)
+    if _has("correlograms"):
+        converted["correlograms"] = _convert_correlograms(sorting_analyzer)
+    if _has("isi_histograms"):
+        converted["isi_histograms"] = _convert_isi_histograms(sorting_analyzer)
+    if _has("template_similarity"):
+        converted["template_similarity"] = _convert_template_similarity(sorting_analyzer)
+    if _has("spike_amplitudes"):
+        converted["spike_amplitudes"] = _convert_spike_vector_extension(
+            sorting_analyzer, "spike_amplitudes", SpikeAmplitudes
+        )
+    if _has("spike_locations"):
+        converted["spike_locations"] = _convert_spike_vector_extension(
+            sorting_analyzer, "spike_locations", SpikeLocations
+        )
+    if _has("amplitude_scalings"):
+        converted["amplitude_scalings"] = _convert_spike_vector_extension(
+            sorting_analyzer, "amplitude_scalings", AmplitudeScalings
+        )
+
+    if _has("principal_components"):
+        if "waveforms" not in converted:
+            raise ValueError("PCA projections require waveforms to be computed.")
+        converted.update(_convert_pca(sorting_analyzer, nwbfile, converted["waveforms"]))
+
+    return converted
+
+
+def _build_extensions(sorting_analyzer, nwbfile):
+    """Convert extensions and assemble a SpikeSortingExtensions object."""
+    converted = _convert_all_extensions(sorting_analyzer, nwbfile)
+    extensions = SpikeSortingExtensions(name="extensions")
+    for attr, obj in converted.items():
+        setattr(extensions, attr, obj)
+    return extensions
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -474,87 +557,8 @@ def add_sorting_analyzer_to_nwbfile(
         table=units_table,
     )
 
-    # -- helper to check whether an extension is computed --
-    def _has(name: str) -> bool:
-        return sorting_analyzer.get_extension(name) is not None
-
-    # -- convert each computed extension --
-    nwb_random_spikes = _convert_random_spikes(sorting_analyzer) if _has("random_spikes") else None
-
-    templates_ext = sorting_analyzer.get_extension("templates")
-    nwb_templates = _convert_templates(sorting_analyzer, nwbfile) if templates_ext is not None else None
-    nbefore = templates_ext.nbefore if templates_ext is not None else None
-
-    nwb_waveforms = None
-    if _has("waveforms"):
-        if nwb_random_spikes is None:
-            raise ValueError("Waveforms extension requires random_spikes to be computed.")
-        if nbefore is None:
-            raise ValueError("Waveforms extension requires templates to be computed (for nbefore).")
-        nwb_waveforms = _convert_waveforms(sorting_analyzer, nwbfile, nwb_random_spikes, nbefore)
-
-    nwb_noise_levels = _convert_noise_levels(sorting_analyzer) if _has("noise_levels") else None
-    nwb_unit_locations = _convert_unit_locations(sorting_analyzer) if _has("unit_locations") else None
-    nwb_correlograms = _convert_correlograms(sorting_analyzer) if _has("correlograms") else None
-    nwb_isi_histograms = _convert_isi_histograms(sorting_analyzer) if _has("isi_histograms") else None
-    nwb_template_similarity = _convert_template_similarity(sorting_analyzer) if _has("template_similarity") else None
-
-    nwb_spike_amplitudes = (
-        _convert_spike_vector_extension(sorting_analyzer, "spike_amplitudes", SpikeAmplitudes)
-        if _has("spike_amplitudes")
-        else None
-    )
-    nwb_spike_locations = (
-        _convert_spike_vector_extension(sorting_analyzer, "spike_locations", SpikeLocations)
-        if _has("spike_locations")
-        else None
-    )
-    nwb_amplitude_scalings = (
-        _convert_spike_vector_extension(sorting_analyzer, "amplitude_scalings", AmplitudeScalings)
-        if _has("amplitude_scalings")
-        else None
-    )
-
-    nwb_pca = None
-    if _has("principal_components"):
-        if nwb_waveforms is None:
-            raise ValueError("PCA projections require waveforms to be computed.")
-        pc_ext = sorting_analyzer.get_extension("principal_components")
-        pc_mode = pc_ext.params.get("mode", "by_channel_local")
-        if pc_mode in ("by_channel_local", "by_channel_global"):
-            nwb_pca = _convert_pca_by_channel(sorting_analyzer, nwbfile, nwb_waveforms)
-        else:
-            nwb_pca = _convert_pca_concatenated(sorting_analyzer, nwb_waveforms)
-
-    # -- assemble SpikeSortingExtensions --
-    extensions = SpikeSortingExtensions(name="extensions")
-    if nwb_random_spikes is not None:
-        extensions.random_spikes = nwb_random_spikes
-    if nwb_waveforms is not None:
-        extensions.waveforms = nwb_waveforms
-    if nwb_templates is not None:
-        extensions.templates = nwb_templates
-    if nwb_noise_levels is not None:
-        extensions.noise_levels = nwb_noise_levels
-    if nwb_unit_locations is not None:
-        extensions.unit_locations = nwb_unit_locations
-    if nwb_correlograms is not None:
-        extensions.correlograms = nwb_correlograms
-    if nwb_isi_histograms is not None:
-        extensions.isi_histograms = nwb_isi_histograms
-    if nwb_template_similarity is not None:
-        extensions.template_similarity = nwb_template_similarity
-    if nwb_spike_amplitudes is not None:
-        extensions.spike_amplitudes = nwb_spike_amplitudes
-    if nwb_spike_locations is not None:
-        extensions.spike_locations = nwb_spike_locations
-    if nwb_amplitude_scalings is not None:
-        extensions.amplitude_scalings = nwb_amplitude_scalings
-    if nwb_pca is not None:
-        if isinstance(nwb_pca, PCAProjectionsByChannel):
-            extensions.pca_projections_by_channel = nwb_pca
-        else:
-            extensions.pca_projections_concatenated = nwb_pca
+    # -- convert & assemble extensions --
+    extensions = _build_extensions(sorting_analyzer, nwbfile)
 
     # -- assemble SpikeSortingContainer --
     sparsity = sorting_analyzer.sparsity
@@ -612,7 +616,6 @@ def read_sorting_analyzer_from_nwb(
 
     from pynwb import NWBHDF5IO
     from spikeinterface.core import ChannelSparsity, create_sorting_analyzer
-    from spikeinterface.core.sortinganalyzer import get_extension_class
     from spikeinterface.extractors import NwbRecordingExtractor, NwbSortingExtractor
 
     nwbfile_path = Path(nwbfile_path)
