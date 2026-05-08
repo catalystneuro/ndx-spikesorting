@@ -71,6 +71,26 @@ def main():
             "(data_index) groups rows by spike, and the second VectorIndex "
             "(data_index_index) groups spikes by unit."
         ),
+        attributes=[
+            NWBAttributeSpec(
+                name="peak_sample_index",
+                dtype="int32",
+                doc=(
+                    "The index of the peak sample in the template waveform (0-indexed). "
+                    "This is the alignment point used during spike sorting, typically the point "
+                    "of maximum absolute amplitude. Combined with the number of samples from the "
+                    "data shape, this fully specifies the temporal structure: samples_before = peak_sample_index, "
+                    "samples_after = n_samples - peak_sample_index."
+                ),
+            ),
+        ],
+        links=[
+            NWBLinkSpec(
+                name="random_spikes",
+                target_type="RandomSpikes",
+                doc="Link to the RandomSpikes used to extract waveforms.",
+            ),
+        ],
         datasets=[
             NWBDatasetSpec(
                 name="data",
@@ -428,19 +448,25 @@ def main():
         ],
     )
 
-    # PrincipalComponents: PCA projections as a double-ragged array
-    principal_components = NWBGroupSpec(
-        neurodata_type_def="PrincipalComponents",
+    # PCAProjectionsByChannel: per-channel PCA projections as a double-ragged array
+    pca_projections_by_channel = NWBGroupSpec(
+        neurodata_type_def="PCAProjectionsByChannel",
         neurodata_type_inc="NWBDataInterface",
-        default_name="principal_components",
+        default_name="pca_projections_by_channel",
         doc=(
-            "PCA projections of spikes organized as a double-ragged array. Each row "
-            "in data is one channel's PCA projection for one spike (per-channel mode) or "
-            "the concatenated projection across all channels (concatenated mode). The "
-            "first VectorIndex (data_index) groups rows by spike, and the second VectorIndex "
-            "(data_index_index) groups spikes by unit. When channels are concatenated "
-            "(e.g. tetrodes), each spike produces a single row and electrodes is omitted."
+            "PCA projections of spikes organized as a double-ragged array for "
+            "per-channel PCA (by_channel_local mode). Each row in data is one channel's "
+            "PCA projection for one spike. The first VectorIndex (data_index) groups "
+            "rows by spike, and the second VectorIndex (data_index_index) groups spikes "
+            "by unit."
         ),
+        links=[
+            NWBLinkSpec(
+                name="waveforms",
+                target_type="Waveforms",
+                doc="Link to the Waveforms from which these projections were computed.",
+            ),
+        ],
         datasets=[
             NWBDatasetSpec(
                 name="data",
@@ -450,9 +476,7 @@ def main():
                 shape=[None, None],
                 doc=(
                     "Flattened PCA projection data. Each row is one channel's projection "
-                    "for one spike (per-channel mode) or the concatenated projection across "
-                    "all channels for one spike (concatenated mode). Shape is "
-                    "(total_rows, num_components)."
+                    "for one spike. Shape is (total_channel_projections, num_components)."
                 ),
             ),
             NWBDatasetSpec(
@@ -475,11 +499,51 @@ def main():
             NWBDatasetSpec(
                 name="electrodes",
                 neurodata_type_inc="DynamicTableRegion",
-                quantity="?",
                 doc=(
                     "Reference to the electrodes table for each row in data. Has the "
                     "same length as the first dimension of data, identifying the channel "
-                    "for each projection row. Omitted when PCA is computed on concatenated channels."
+                    "for each projection row."
+                ),
+            ),
+        ],
+    )
+
+    # PCAProjectionsChannelsConcatenated: concatenated-channels PCA projections
+    pca_projections_concatenated = NWBGroupSpec(
+        neurodata_type_def="PCAProjectionsConcatenated",
+        neurodata_type_inc="NWBDataInterface",
+        default_name="pca_projections_concatenated",
+        doc=(
+            "PCA projections of spikes where channels are flattened into a single "
+            "feature vector before PCA (concatenated mode). Each row in data is the "
+            "concatenated projection for one spike. The VectorIndex (data_index) groups "
+            "spikes by unit."
+        ),
+        links=[
+            NWBLinkSpec(
+                name="waveforms",
+                target_type="Waveforms",
+                doc="Link to the Waveforms from which these projections were computed.",
+            ),
+        ],
+        datasets=[
+            NWBDatasetSpec(
+                name="data",
+                neurodata_type_inc="VectorData",
+                dtype="float",
+                dims=["num_spikes_total", "num_components"],
+                shape=[None, None],
+                doc=(
+                    "PCA projection data. Each row is the concatenated projection across "
+                    "all channels for one spike. Shape is (total_spikes, num_components)."
+                ),
+            ),
+            NWBDatasetSpec(
+                name="data_index",
+                neurodata_type_inc="VectorIndex",
+                doc=(
+                    "Index into data per unit. The projections for unit i are "
+                    "data[data_index[i-1]:data_index[i], :]."
                 ),
             ),
         ],
@@ -551,9 +615,14 @@ def main():
                 doc="Amplitudes scalings extension data.",
             ),
             NWBGroupSpec(
-                neurodata_type_inc="PrincipalComponents",
+                neurodata_type_inc="PCAProjectionsByChannel",
                 quantity="?",
-                doc="PCA projections of spikes.",
+                doc="Per-channel PCA projections of spikes (double-ragged).",
+            ),
+            NWBGroupSpec(
+                neurodata_type_inc="PCAProjectionsConcatenated",
+                quantity="?",
+                doc="Concatenated-channels PCA projections of spikes (single-ragged).",
             ),
         ],
     )
@@ -636,7 +705,8 @@ def main():
         spike_amplitudes,
         spike_locations,
         amplitude_scalings,
-        principal_components,
+        pca_projections_by_channel,
+        pca_projections_concatenated,
         spike_sorting_extensions,
         spike_sorting_container,
     ]

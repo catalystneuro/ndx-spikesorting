@@ -25,7 +25,8 @@ TemplateSimilarity = get_class("TemplateSimilarity", "ndx-spikesorting")
 SpikeAmplitudes = get_class("SpikeAmplitudes", "ndx-spikesorting")
 SpikeLocations = get_class("SpikeLocations", "ndx-spikesorting")
 AmplitudeScalings = get_class("AmplitudeScalings", "ndx-spikesorting")
-PrincipalComponents = get_class("PrincipalComponents", "ndx-spikesorting")
+PCAProjectionsByChannel = get_class("PCAProjectionsByChannel", "ndx-spikesorting")
+PCAProjectionsConcatenated = get_class("PCAProjectionsConcatenated", "ndx-spikesorting")
 
 SpikeSortingExtensions = get_class("SpikeSortingExtensions", "ndx-spikesorting")
 SpikeSortingContainer = get_class("SpikeSortingContainer", "ndx-spikesorting")
@@ -44,7 +45,8 @@ __all__ = [
     "SpikeAmplitudes",
     "SpikeLocations",
     "AmplitudeScalings",
-    "PrincipalComponents",
+    "PCAProjectionsByChannel",
+    "PCAProjectionsConcatenated",
     "SpikeSortingExtensions",
     "SpikeSortingContainer",
     "templates_to_dense",

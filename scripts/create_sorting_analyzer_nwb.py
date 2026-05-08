@@ -30,7 +30,8 @@ from ndx_spikesorting import (
     SpikeAmplitudes,
     SpikeLocations,
     AmplitudeScalings,
-    PrincipalComponents,
+    PCAProjectionsByChannel,
+    PCAProjectionsConcatenated,
     SpikeSortingContainer,
     SpikeSortingExtensions,
 )
@@ -143,6 +144,8 @@ nwb_random_spikes = RandomSpikes(
 
 # Waveforms (double-ragged: rows grouped by spike, spikes grouped by unit)
 waveforms_ext = sorting_analyzer.get_extension("waveforms")
+templates_ext = sorting_analyzer.get_extension("templates")
+nbefore = templates_ext.nbefore
 
 all_wf_rows = []
 all_wf_electrode_indices = []
@@ -150,6 +153,7 @@ wf_spike_cumulative = []   # data_index: cumulative row count per spike
 wf_unit_cumulative = []    # data_index_index: cumulative spike count per unit
 
 total_spikes = 0
+running_row_count = 0
 for unit_id in unit_ids:
     # (n_spikes, n_samples, n_channels_sparse)
     unit_waveforms = waveforms_ext.get_waveforms_one_unit(unit_id=unit_id, force_dense=False)
@@ -165,7 +169,8 @@ for unit_id in unit_ids:
         spike_wf = unit_waveforms[spike_idx].T  # from (n_samples, n_channels) to (n_channels, n_samples)
         all_wf_rows.append(spike_wf)
         all_wf_electrode_indices.extend(channel_indices)
-        wf_spike_cumulative.append(len(np.vstack(all_wf_rows)))
+        running_row_count += len(channel_indices)
+        wf_spike_cumulative.append(running_row_count)
 
     total_spikes += n_spikes_unit
     wf_unit_cumulative.append(total_spikes)
@@ -197,16 +202,15 @@ wf_electrodes = DynamicTableRegion(
 
 nwb_waveforms = Waveforms(
     name="waveforms",
+    peak_sample_index=int(nbefore),
     data=wf_data,
     data_index=wf_data_index,
     data_index_index=wf_data_index_index,
     electrodes=wf_electrodes,
+    random_spikes=nwb_random_spikes,
 )
 
 # Templates
-templates_ext = sorting_analyzer.get_extension("templates")
-nbefore = templates_ext.nbefore
-
 all_data = []
 all_electrode_indices = []
 cumulative_index = []
@@ -334,82 +338,100 @@ for extension_name in base_vector_extensions:
         data_index=data_index
     )
 
-# PrincipalComponents (double-ragged: rows grouped by spike, spikes grouped by unit)
+# PCA Projections (per-channel mode: double-ragged)
 pc_ext = sorting_analyzer.get_extension("principal_components")
 pc_mode = pc_ext.params.get("mode", "by_channel_local")
 
-all_pc_rows = []
-all_pc_electrode_indices = []
-pc_spike_cumulative = []
-pc_unit_cumulative = []
+if pc_mode in ("by_channel_local", "by_channel_global"):
+    # Per-channel mode: double-ragged array with electrodes
+    all_pc_rows = []
+    all_pc_electrode_indices = []
+    pc_spike_cumulative = []
+    pc_unit_cumulative = []
 
-total_spikes = 0
-for unit_id in unit_ids:
-    # (n_spikes, n_components, n_channels_sparse) for by_channel_local
-    # (n_spikes, n_components) for concatenated
-    unit_pcs = pc_ext.get_projections_one_unit(unit_id=unit_id, sparse=True)
-    if isinstance(unit_pcs, tuple):
-        unit_pcs, _ = unit_pcs
-    n_spikes_unit = unit_pcs.shape[0]
+    total_spikes = 0
+    running_row_count = 0
+    for unit_id in unit_ids:
+        unit_pcs = pc_ext.get_projections_one_unit(unit_id=unit_id, sparse=True)
+        if isinstance(unit_pcs, tuple):
+            unit_pcs, _ = unit_pcs
+        n_spikes_unit = unit_pcs.shape[0]
 
-    if unit_pcs.ndim == 3:
-        # Per-channel mode
         if sparsity is not None:
             channel_indices = sparsity.unit_id_to_channel_indices[unit_id]
         else:
             channel_indices = np.arange(unit_pcs.shape[2])
 
         for spike_idx in range(n_spikes_unit):
-            # (n_channels, n_components)
-            spike_pc = unit_pcs[spike_idx].T  # from (n_components, n_channels) to (n_channels, n_components)
+            spike_pc = unit_pcs[spike_idx].T  # (n_components, n_channels) -> (n_channels, n_components)
             all_pc_rows.append(spike_pc)
             all_pc_electrode_indices.extend(channel_indices)
-            pc_spike_cumulative.append(len(np.vstack(all_pc_rows)))
-    else:
-        # Concatenated mode: one row per spike
-        for spike_idx in range(n_spikes_unit):
-            all_pc_rows.append(unit_pcs[spike_idx:spike_idx + 1])  # (1, n_components)
-            pc_spike_cumulative.append(len(np.vstack(all_pc_rows)))
+            running_row_count += len(channel_indices)
+            pc_spike_cumulative.append(running_row_count)
 
-    total_spikes += n_spikes_unit
-    pc_unit_cumulative.append(total_spikes)
+        total_spikes += n_spikes_unit
+        pc_unit_cumulative.append(total_spikes)
 
-pc_data = VectorData(
-    name="data",
-    data=np.vstack(all_pc_rows).astype(np.float64),
-    description="PCA projection data",
-)
-
-pc_data_index = VectorIndex(
-    name="data_index",
-    data=np.array(pc_spike_cumulative, dtype=np.int64),
-    target=pc_data,
-)
-
-pc_data_index_index = VectorIndex(
-    name="data_index_index",
-    data=np.array(pc_unit_cumulative, dtype=np.int64),
-    target=pc_data_index,
-)
-
-# Only include electrodes for per-channel mode
-if unit_pcs.ndim == 3:
+    pc_data = VectorData(
+        name="data",
+        data=np.vstack(all_pc_rows).astype(np.float64),
+        description="PCA projection data",
+    )
+    pc_data_index = VectorIndex(
+        name="data_index",
+        data=np.array(pc_spike_cumulative, dtype=np.int64),
+        target=pc_data,
+    )
+    pc_data_index_index = VectorIndex(
+        name="data_index_index",
+        data=np.array(pc_unit_cumulative, dtype=np.int64),
+        target=pc_data_index,
+    )
     pc_electrodes = DynamicTableRegion(
         name="electrodes",
         data=list(int(i) for i in all_pc_electrode_indices),
         description="Electrode for each projection row.",
         table=nwbfile.electrodes,
     )
+    nwb_pca = PCAProjectionsByChannel(
+        name="pca_projections_by_channel",
+        data=pc_data,
+        data_index=pc_data_index,
+        data_index_index=pc_data_index_index,
+        electrodes=pc_electrodes,
+        waveforms=nwb_waveforms,
+    )
 else:
-    pc_electrodes = None
+    # Concatenated mode: single-ragged array without electrodes
+    all_pc_rows = []
+    pc_unit_cumulative = []
 
-nwb_principal_components = PrincipalComponents(
-    name="principal_components",
-    data=pc_data,
-    data_index=pc_data_index,
-    data_index_index=pc_data_index_index,
-    electrodes=pc_electrodes,
-)
+    total_spikes = 0
+    for unit_id in unit_ids:
+        unit_pcs = pc_ext.get_projections_one_unit(unit_id=unit_id, sparse=True)
+        if isinstance(unit_pcs, tuple):
+            unit_pcs, _ = unit_pcs
+        n_spikes_unit = unit_pcs.shape[0]
+        all_pc_rows.append(unit_pcs)  # (n_spikes, n_components)
+        total_spikes += n_spikes_unit
+        pc_unit_cumulative.append(total_spikes)
+
+    pc_data = VectorData(
+        name="data",
+        data=np.vstack(all_pc_rows).astype(np.float64),
+        description="PCA projection data",
+    )
+    pc_data_index = VectorIndex(
+        name="data_index",
+        data=np.array(pc_unit_cumulative, dtype=np.int64),
+        target=pc_data,
+    )
+    nwb_pca = PCAProjectionsConcatenated(
+        name="pca_projections_concatenated",
+        data=pc_data,
+        data_index=pc_data_index,
+        waveforms=nwb_waveforms,
+    )
 
 
 # ---- Step 4: Assemble the SpikeSortingContainer and write to NWB ----
@@ -428,7 +450,10 @@ extensions.template_similarity = nwb_template_similarity
 extensions.spike_amplitudes = nwb_extensions["spike_amplitudes"]
 extensions.spike_locations = nwb_extensions["spike_locations"]
 extensions.amplitude_scalings = nwb_extensions["amplitude_scalings"]
-extensions.principal_components = nwb_principal_components
+if isinstance(nwb_pca, PCAProjectionsByChannel):
+    extensions.pca_projections_by_channel = nwb_pca
+else:
+    extensions.pca_projections_concatenated = nwb_pca
 
 container = SpikeSortingContainer(
     name="spike_sorting",
