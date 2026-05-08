@@ -16,7 +16,7 @@ import numpy as np
 from hdmf.common import VectorData, VectorIndex, DynamicTableRegion
 from neuroconv.tools.spikeinterface import add_recording_to_nwbfile, add_sorting_to_nwbfile
 from pynwb import NWBHDF5IO, NWBFile
-from spikeinterface.core import create_sorting_analyzer, generate_ground_truth_recording
+from spikeinterface import create_sorting_analyzer, generate_ground_truth_recording, set_global_job_kwargs
 
 from ndx_spikesorting import (
     RandomSpikes,
@@ -32,14 +32,17 @@ from ndx_spikesorting import (
     AmplitudeScalings,
     PCAProjectionsByChannel,
     PCAProjectionsConcatenated,
+    ValidUnitPeriods,
     SpikeSortingContainer,
     SpikeSortingExtensions,
 )
 
+set_global_job_kwargs(n_jobs=16)
+
 # ---- Step 1: Generate mock data and create a SortingAnalyzer ----
 
 recording, sorting = generate_ground_truth_recording(
-    durations=[5.0],
+    durations=[180.0],
     num_units=5,
     num_channels=10,
     seed=42,
@@ -65,7 +68,8 @@ sorting_analyzer.compute(
         "template_similarity": {},
         "spike_amplitudes": {},
         "amplitude_scalings": {},
-        "spike_locations": {"method": "grid_convolution"}
+        "spike_locations": {"method": "grid_convolution"},
+        "valid_unit_periods": {"minimum_valid_period_duration": 0},
     }
 )
 
@@ -433,6 +437,47 @@ else:
         waveforms=nwb_waveforms,
     )
 
+# ValidUnitPeriods
+valid_periods_ext = sorting_analyzer.get_extension("valid_unit_periods")
+if valid_periods_ext is not None:
+    valid_periods_data = valid_periods_ext.get_data(outputs="numpy")
+    sampling_frequency = sorting_analyzer.sampling_frequency
+
+    start_times = []
+    stop_times = []
+    unit_indices = []
+
+    for period in valid_periods_data:
+        start_times.append(float(period["start_sample_index"]) / sampling_frequency)
+        stop_times.append(float(period["end_sample_index"]) / sampling_frequency)
+        unit_indices.append(int(period["unit_index"]))
+
+    if len(start_times) > 0:
+        vup_units_index = DynamicTableRegion(
+            name="units_index",
+            data=unit_indices,
+            description="Reference to units table for each valid period.",
+            table=nwbfile.units,
+        )
+
+        nwb_valid_unit_periods = ValidUnitPeriods(
+            name="valid_unit_periods",
+            description="Valid time periods per unit from spike sorting quality estimation.",
+            columns=[
+                VectorData(
+                    name="start_time", data=start_times, description="Start time of each valid period in seconds."
+                ),
+                VectorData(
+                    name="stop_time", data=stop_times, description="Stop time of each valid period in seconds."
+                ),
+                vup_units_index,
+            ],
+        )
+    else:
+        nwb_valid_unit_periods = None
+else:
+    nwb_valid_unit_periods = None
+
 
 # ---- Step 4: Assemble the SpikeSortingContainer and write to NWB ----
 
@@ -454,6 +499,8 @@ if isinstance(nwb_pca, PCAProjectionsByChannel):
     extensions.pca_projections_by_channel = nwb_pca
 else:
     extensions.pca_projections_concatenated = nwb_pca
+if nwb_valid_unit_periods is not None:
+    extensions.valid_unit_periods = nwb_valid_unit_periods
 
 container = SpikeSortingContainer(
     name="spike_sorting",

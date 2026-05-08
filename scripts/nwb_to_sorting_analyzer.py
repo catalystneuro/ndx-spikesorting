@@ -89,6 +89,7 @@ def read_sorting_analyzer_from_nwb(nwbfile_path: str | Path) -> SortingAnalyzer:
         _load_amplitude_scalings_extension_from_nwb(extensions, sorting_analyzer)
         _load_spike_locations_extension_from_nwb(extensions, sorting_analyzer)
         _load_pca_projections_from_nwb(extensions, sorting_analyzer)
+        _load_valid_unit_periods_from_nwb(extensions, sorting_analyzer)
         
 
     return sorting_analyzer
@@ -613,3 +614,46 @@ def _load_pca_concatenated_from_nwb(pc_nwb, sorting_analyzer):
     ext.data["pca_projection"] = all_projections
     ext.run_info = {"run_completed": True, "runtime_s": 0.0}
     sorting_analyzer.extensions["principal_components"] = ext
+
+
+def _load_valid_unit_periods_from_nwb(extensions, sorting_analyzer):
+    """Instantiate the valid_unit_periods extension if present in the NWB container.
+
+    **NWB** stores valid unit periods as a ``TimeIntervals`` table with columns:
+    - ``start_time``: start of each valid period in seconds
+    - ``stop_time``: end of each valid period in seconds
+    - ``units_index``: DynamicTableRegion referencing the units table
+
+    **SpikeInterface** stores valid unit periods as a structured numpy array
+    with dtype ``unit_period_dtype``:
+    ``(segment_index, start_sample_index, end_sample_index, unit_index)``
+    in sample indices.
+
+    The conversion multiplies times by sampling frequency to get sample indices.
+    Since NWB TimeIntervals does not store segment_index, we assume segment 0.
+    """
+    from spikeinterface.core.base import unit_period_dtype
+
+    valid_periods_nwb = getattr(extensions, "valid_unit_periods", None)
+    if valid_periods_nwb is None:
+        return
+
+    start_times = np.array(valid_periods_nwb["start_time"][:], dtype=np.float64)
+    stop_times = np.array(valid_periods_nwb["stop_time"][:], dtype=np.float64)
+    unit_indices = np.array(valid_periods_nwb["units_index"].data[:], dtype=np.int64)
+
+    sampling_frequency = sorting_analyzer.sampling_frequency
+    n_periods = len(start_times)
+
+    valid_periods = np.zeros(n_periods, dtype=unit_period_dtype)
+    valid_periods["segment_index"] = 0
+    valid_periods["start_sample_index"] = np.round(start_times * sampling_frequency).astype(np.int64)
+    valid_periods["end_sample_index"] = np.round(stop_times * sampling_frequency).astype(np.int64)
+    valid_periods["unit_index"] = unit_indices
+
+    ext_class = get_extension_class("valid_unit_periods")
+    ext = ext_class(sorting_analyzer)
+    ext.set_params(method="user_defined", user_defined_periods=valid_periods, minimum_valid_period_duration=0)
+    ext.data["valid_unit_periods"] = valid_periods
+    ext.run_info = {"run_completed": True, "runtime_s": 0.0}
+    sorting_analyzer.extensions["valid_unit_periods"] = ext
