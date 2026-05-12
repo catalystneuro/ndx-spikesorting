@@ -24,7 +24,7 @@ set_global_job_kwargs(n_jobs=-1)
 # ---- Step 1: Generate mock data and create a SortingAnalyzer ----
 
 recording, sorting = generate_ground_truth_recording(
-    durations=[30.0],
+    durations=[5.0],
     num_units=5,
     num_channels=10,
     seed=42,
@@ -61,18 +61,18 @@ num_units = len(sorting.unit_ids)
 sampling_frequency = recording.sampling_frequency
 user_defined_periods = np.array([], dtype=unit_period_dtype)
 for unit_index in range(num_units):
-    # First valid period: 2s–10s
+    # First valid period: 0.5s–2s
     user_defined_periods = np.append(
         user_defined_periods,
         np.array(
-            [(0, int(2.0 * sampling_frequency), int(10.0 * sampling_frequency), unit_index)],
+            [(0, int(0.5 * sampling_frequency), int(2.0 * sampling_frequency), unit_index)],
             dtype=unit_period_dtype)
         )
-    # Second valid period: 15s–25s
+    # Second valid period: 3s–4.5s
     user_defined_periods = np.append(
         user_defined_periods,
         np.array(
-            [(0, int(15.0 * sampling_frequency), int(25.0 * sampling_frequency), unit_index)],
+            [(0, int(3.0 * sampling_frequency), int(4.5 * sampling_frequency), unit_index)],
             dtype=unit_period_dtype
         )
     )
