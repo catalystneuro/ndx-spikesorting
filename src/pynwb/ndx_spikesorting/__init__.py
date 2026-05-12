@@ -31,7 +31,7 @@ PCAProjectionsConcatenated = get_class("PCAProjectionsConcatenated", "ndx-spikes
 SpikeSortingExtensions = get_class("SpikeSortingExtensions", "ndx-spikesorting")
 SpikeSortingContainer = get_class("SpikeSortingContainer", "ndx-spikesorting")
 
-from .utils import templates_to_dense
+from .utils import templates_to_dense, add_sorting_analyzer_to_nwbfile, read_sorting_analyzer_from_nwb
 
 __all__ = [
     "RandomSpikes",
@@ -50,6 +50,8 @@ __all__ = [
     "SpikeSortingExtensions",
     "SpikeSortingContainer",
     "templates_to_dense",
+    "add_sorting_analyzer_to_nwbfile",
+    "read_sorting_analyzer_from_nwb",
 ]
 
 # Remove these functions/modules from the package
