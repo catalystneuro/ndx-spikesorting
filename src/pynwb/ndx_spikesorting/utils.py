@@ -460,7 +460,7 @@ def _convert_pca(sorting_analyzer, nwbfile, nwb_waveforms):
     return {"pca_projections_concatenated": _convert_pca_concatenated(sorting_analyzer, nwb_waveforms)}
 
 
-def _convert_all_extensions(sorting_analyzer, nwbfile):
+def _convert_all_extensions(sorting_analyzer, nwbfile):  # noqa: C901
     """Convert computed SortingAnalyzer extensions to NWB objects.
 
     Returns a dict mapping attribute names on ``SpikeSortingExtensions``
