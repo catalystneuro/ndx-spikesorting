@@ -5,7 +5,6 @@ import numpy as np
 from hdmf.common import VectorData, VectorIndex, DynamicTableRegion
 from pynwb import NWBFile
 from pynwb.ecephys import ElectricalSeries
-from spikeinterface import SortingAnalyzer
 
 from ndx_spikesorting import (
     Templates,
@@ -73,7 +72,7 @@ def templates_to_dense(templates: Templates, num_channels: int) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
-def _convert_random_spikes(sorting_analyzer: SortingAnalyzer) -> RandomSpikes:
+def _convert_random_spikes(sorting_analyzer: "SortingAnalyzer") -> RandomSpikes:
     ext = sorting_analyzer.get_extension("random_spikes")
     random_spikes_data = ext.get_random_spikes()
     unit_ids = sorting_analyzer.unit_ids
@@ -81,6 +80,7 @@ def _convert_random_spikes(sorting_analyzer: SortingAnalyzer) -> RandomSpikes:
 
     all_indices = []
     cumulative_index = []
+    running_count = 0
 
     for unit_id in unit_ids:
         spike_train = sorting.get_unit_spike_train(unit_id=unit_id)
@@ -95,7 +95,8 @@ def _convert_random_spikes(sorting_analyzer: SortingAnalyzer) -> RandomSpikes:
 
         unit_indices = np.array(unit_indices, dtype=np.int64)
         all_indices.append(unit_indices)
-        cumulative_index.append(sum(len(idx) for idx in all_indices))
+        running_count += len(unit_indices)
+        cumulative_index.append(running_count)
 
     random_spikes_indices = VectorData(
         name="random_spikes_indices",
@@ -115,7 +116,7 @@ def _convert_random_spikes(sorting_analyzer: SortingAnalyzer) -> RandomSpikes:
 
 
 def _convert_waveforms(
-    sorting_analyzer: SortingAnalyzer,
+    sorting_analyzer: "SortingAnalyzer",
     nwbfile: NWBFile,
     nwb_random_spikes: RandomSpikes,
     nbefore: int,
@@ -183,7 +184,7 @@ def _convert_waveforms(
 
 
 def _convert_templates(
-    sorting_analyzer: SortingAnalyzer,
+    sorting_analyzer: "SortingAnalyzer",
     nwbfile: NWBFile,
 ) -> Templates:
     ext = sorting_analyzer.get_extension("templates")
@@ -194,6 +195,7 @@ def _convert_templates(
     all_data = []
     all_electrode_indices = []
     cumulative_index = []
+    running_row_count = 0
 
     for unit_id in unit_ids:
         template = ext.get_unit_template(unit_id=unit_id)
@@ -207,7 +209,8 @@ def _convert_templates(
 
         all_data.append(sparse_template)
         all_electrode_indices.extend(channel_indices)
-        cumulative_index.append(len(np.vstack(all_data)))
+        running_row_count += len(sparse_template)
+        cumulative_index.append(running_row_count)
 
     data = VectorData(
         name="data",
@@ -234,35 +237,35 @@ def _convert_templates(
     )
 
 
-def _convert_noise_levels(sorting_analyzer: SortingAnalyzer) -> NoiseLevels:
+def _convert_noise_levels(sorting_analyzer: "SortingAnalyzer") -> NoiseLevels:
     ext = sorting_analyzer.get_extension("noise_levels")
     return NoiseLevels(name="noise_levels", data=ext.get_data())
 
 
-def _convert_unit_locations(sorting_analyzer: SortingAnalyzer) -> UnitLocations:
+def _convert_unit_locations(sorting_analyzer: "SortingAnalyzer") -> UnitLocations:
     ext = sorting_analyzer.get_extension("unit_locations")
     return UnitLocations(name="unit_locations", data=ext.get_data())
 
 
-def _convert_correlograms(sorting_analyzer: SortingAnalyzer) -> Correlograms:
+def _convert_correlograms(sorting_analyzer: "SortingAnalyzer") -> Correlograms:
     ext = sorting_analyzer.get_extension("correlograms")
     ccgs, bin_edges = ext.get_data()
     return Correlograms(name="correlograms", data=ccgs, bin_edges=bin_edges)
 
 
-def _convert_isi_histograms(sorting_analyzer: SortingAnalyzer) -> ISIHistograms:
+def _convert_isi_histograms(sorting_analyzer: "SortingAnalyzer") -> ISIHistograms:
     ext = sorting_analyzer.get_extension("isi_histograms")
     isis, bin_edges = ext.get_data()
     return ISIHistograms(name="isi_histograms", data=isis, bin_edges=bin_edges)
 
 
-def _convert_template_similarity(sorting_analyzer: SortingAnalyzer) -> TemplateSimilarity:
+def _convert_template_similarity(sorting_analyzer: "SortingAnalyzer") -> TemplateSimilarity:
     ext = sorting_analyzer.get_extension("template_similarity")
     return TemplateSimilarity(name="template_similarity", data=ext.get_data())
 
 
 def _convert_spike_vector_extension(
-    sorting_analyzer: SortingAnalyzer,
+    sorting_analyzer: "SortingAnalyzer",
     extension_name: str,
     nwb_class: type,
 ) -> SpikeAmplitudes | SpikeLocations | AmplitudeScalings:
@@ -290,7 +293,7 @@ def _convert_spike_vector_extension(
 
 
 def _convert_pca_by_channel(
-    sorting_analyzer: SortingAnalyzer,
+    sorting_analyzer: "SortingAnalyzer",
     nwbfile: NWBFile,
     nwb_waveforms: Waveforms,
 ) -> PCAProjectionsByChannel:
@@ -358,7 +361,7 @@ def _convert_pca_by_channel(
 
 
 def _convert_pca_concatenated(
-    sorting_analyzer: SortingAnalyzer,
+    sorting_analyzer: "SortingAnalyzer",
     nwb_waveforms: Waveforms,
 ) -> PCAProjectionsConcatenated:
     ext = sorting_analyzer.get_extension("principal_components")
@@ -484,7 +487,7 @@ def _build_extensions(sorting_analyzer, nwbfile):
 
 
 def add_sorting_analyzer_to_nwbfile(
-    sorting_analyzer: SortingAnalyzer,
+    sorting_analyzer: "SortingAnalyzer",
     nwbfile: NWBFile,
     electrical_series_name: str | None = None,
     unit_table_name: str | None = None,
@@ -591,7 +594,7 @@ def add_sorting_analyzer_to_nwbfile(
 def read_sorting_analyzer_from_nwb(
     nwbfile_path: str | Path,
     container_path: str = "ecephys/spike_sorting",
-) -> SortingAnalyzer:
+) -> "SortingAnalyzer":
     """Read an ndx-spikesorting NWB file and return a SortingAnalyzer.
 
     Opens the NWB file, extracts the ``SpikeSortingContainer`` at
@@ -688,7 +691,7 @@ def read_sorting_analyzer_from_nwb(
 # ---------------------------------------------------------------------------
 
 
-def _load_random_spikes(extensions, sorting_analyzer: SortingAnalyzer) -> None:
+def _load_random_spikes(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
     """Instantiate the random_spikes extension if present in the NWB container.
 
     Converts per-unit local spike train indices (NWB ragged representation)
@@ -734,7 +737,7 @@ def _load_random_spikes(extensions, sorting_analyzer: SortingAnalyzer) -> None:
     sorting_analyzer.extensions["random_spikes"] = ext
 
 
-def _load_waveforms(extensions, sorting_analyzer: SortingAnalyzer) -> None:
+def _load_waveforms(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
     """Instantiate the waveforms extension if present in the NWB container.
 
     Converts the double-ragged NWB representation (rows grouped by spike,
@@ -792,7 +795,7 @@ def _load_waveforms(extensions, sorting_analyzer: SortingAnalyzer) -> None:
     sorting_analyzer.extensions["waveforms"] = ext
 
 
-def _load_templates(extensions, sorting_analyzer: SortingAnalyzer) -> None:
+def _load_templates(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
     """Instantiate the templates extension if present in the NWB container.
 
     Converts the sparse ragged NWB representation back to SpikeInterface's
@@ -822,7 +825,7 @@ def _load_templates(extensions, sorting_analyzer: SortingAnalyzer) -> None:
     sorting_analyzer.extensions["templates"] = ext
 
 
-def _load_noise_levels(extensions, sorting_analyzer: SortingAnalyzer) -> None:
+def _load_noise_levels(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
     from spikeinterface.core.sortinganalyzer import get_extension_class
 
     noise_levels_nwb = extensions.noise_levels
@@ -837,7 +840,7 @@ def _load_noise_levels(extensions, sorting_analyzer: SortingAnalyzer) -> None:
     sorting_analyzer.extensions["noise_levels"] = ext
 
 
-def _load_unit_locations(extensions, sorting_analyzer: SortingAnalyzer) -> None:
+def _load_unit_locations(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
     from spikeinterface.core.sortinganalyzer import get_extension_class
 
     unit_locations_nwb = extensions.unit_locations
@@ -852,7 +855,7 @@ def _load_unit_locations(extensions, sorting_analyzer: SortingAnalyzer) -> None:
     sorting_analyzer.extensions["unit_locations"] = ext
 
 
-def _load_correlograms(extensions, sorting_analyzer: SortingAnalyzer) -> None:
+def _load_correlograms(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
     from spikeinterface.core.sortinganalyzer import get_extension_class
 
     correlograms_nwb = extensions.correlograms
@@ -868,7 +871,7 @@ def _load_correlograms(extensions, sorting_analyzer: SortingAnalyzer) -> None:
     sorting_analyzer.extensions["correlograms"] = ext
 
 
-def _load_isi_histograms(extensions, sorting_analyzer: SortingAnalyzer) -> None:
+def _load_isi_histograms(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
     from spikeinterface.core.sortinganalyzer import get_extension_class
 
     isi_histograms_nwb = extensions.isi_histograms
@@ -884,7 +887,7 @@ def _load_isi_histograms(extensions, sorting_analyzer: SortingAnalyzer) -> None:
     sorting_analyzer.extensions["isi_histograms"] = ext
 
 
-def _load_template_similarity(extensions, sorting_analyzer: SortingAnalyzer) -> None:
+def _load_template_similarity(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
     from spikeinterface.core.sortinganalyzer import get_extension_class
 
     template_similarity_nwb = extensions.template_similarity
@@ -899,7 +902,7 @@ def _load_template_similarity(extensions, sorting_analyzer: SortingAnalyzer) -> 
     sorting_analyzer.extensions["template_similarity"] = ext
 
 
-def _load_spike_amplitudes(extensions, sorting_analyzer: SortingAnalyzer) -> None:
+def _load_spike_amplitudes(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
     from spikeinterface.core.sortinganalyzer import get_extension_class
 
     spike_amplitudes_nwb = extensions.spike_amplitudes
@@ -919,7 +922,7 @@ def _load_spike_amplitudes(extensions, sorting_analyzer: SortingAnalyzer) -> Non
     sorting_analyzer.extensions["spike_amplitudes"] = ext
 
 
-def _load_spike_locations(extensions, sorting_analyzer: SortingAnalyzer) -> None:
+def _load_spike_locations(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
     from spikeinterface.core.sortinganalyzer import get_extension_class
 
     spike_locations_nwb = extensions.spike_locations
@@ -945,7 +948,7 @@ def _load_spike_locations(extensions, sorting_analyzer: SortingAnalyzer) -> None
     sorting_analyzer.extensions["spike_locations"] = ext
 
 
-def _load_amplitude_scalings(extensions, sorting_analyzer: SortingAnalyzer) -> None:
+def _load_amplitude_scalings(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
     from spikeinterface.core.sortinganalyzer import get_extension_class
 
     amplitude_scalings_nwb = extensions.amplitude_scalings
@@ -965,7 +968,7 @@ def _load_amplitude_scalings(extensions, sorting_analyzer: SortingAnalyzer) -> N
     sorting_analyzer.extensions["amplitude_scalings"] = ext
 
 
-def _load_pca_projections(extensions, sorting_analyzer: SortingAnalyzer) -> None:
+def _load_pca_projections(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
     """Dispatch to per-channel or concatenated PCA loader."""
     by_channel_nwb = getattr(extensions, "pca_projections_by_channel", None)
     concatenated_nwb = getattr(extensions, "pca_projections_concatenated", None)
@@ -976,7 +979,7 @@ def _load_pca_projections(extensions, sorting_analyzer: SortingAnalyzer) -> None
         _load_pca_concatenated(concatenated_nwb, sorting_analyzer)
 
 
-def _load_pca_by_channel(pc_nwb, sorting_analyzer: SortingAnalyzer) -> None:
+def _load_pca_by_channel(pc_nwb, sorting_analyzer: "SortingAnalyzer") -> None:
     """Load per-channel PCA projections (double-ragged) into the SortingAnalyzer."""
     from spikeinterface.core.sortinganalyzer import get_extension_class
 
@@ -1025,7 +1028,7 @@ def _load_pca_by_channel(pc_nwb, sorting_analyzer: SortingAnalyzer) -> None:
     sorting_analyzer.extensions["principal_components"] = ext
 
 
-def _load_pca_concatenated(pc_nwb, sorting_analyzer: SortingAnalyzer) -> None:
+def _load_pca_concatenated(pc_nwb, sorting_analyzer: "SortingAnalyzer") -> None:
     """Load concatenated PCA projections (single-ragged) into the SortingAnalyzer."""
     from spikeinterface.core.sortinganalyzer import get_extension_class
 
