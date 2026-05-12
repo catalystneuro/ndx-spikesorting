@@ -26,6 +26,7 @@ def main():
         ],
     )
     ns_builder.include_namespace("core")
+    ns_builder.include_type("DynamicTable", namespace="hdmf-common")
 
     # RandomSpikes: stores random spike indices per unit for waveform extraction
     random_spikes = NWBGroupSpec(
@@ -549,6 +550,19 @@ def main():
         ],
     )
 
+    # MetricExtension: a DynamicTable for storing per-unit metric values
+    metric_extension = NWBGroupSpec(
+        neurodata_type_def="MetricExtension",
+        neurodata_type_inc="DynamicTable",
+        default_name="quality_metrics",
+        doc=(
+            "A DynamicTable storing metric values computed for each unit. "
+            "Rows correspond to units in the same order as the linked units table. "
+            "Each column is a metric (e.g., snr, firing_rate, isi_violations_ratio). "
+            "Column descriptions are automatically populated from SpikeInterface metric definitions."
+        ),
+    )
+
     # ValidUnitPeriods: valid time periods for each unit using TimeIntervals
     valid_unit_periods = NWBGroupSpec(
         neurodata_type_def="ValidUnitPeriods",
@@ -649,6 +663,11 @@ def main():
                 doc="Concatenated-channels PCA projections of spikes (single-ragged).",
             ),
             NWBGroupSpec(
+                neurodata_type_inc="MetricExtension",
+                quantity="*",
+                doc="Metric tables (e.g. quality_metrics, template_metrics). Multiple instances allowed.",
+            ),
+            NWBGroupSpec(
                 neurodata_type_inc="ValidUnitPeriods",
                 quantity="?",
                 doc="Valid unit periods extension data.",
@@ -736,6 +755,7 @@ def main():
         amplitude_scalings,
         pca_projections_by_channel,
         pca_projections_concatenated,
+        metric_extension,
         valid_unit_periods,
         spike_sorting_extensions,
         spike_sorting_container,

@@ -52,6 +52,9 @@ sorting_analyzer.compute(
         "spike_amplitudes": {},
         "amplitude_scalings": {},
         "spike_locations": {"method": "grid_convolution"},
+        "spiketrain_metrics": {},
+        "quality_metrics": {},
+        "template_metrics": {}
     }
 )
 
@@ -94,6 +97,7 @@ nwbfile = NWBFile(
     lab="NWB Extension Test",
     institution="SpikeInterface",
 )
+
 
 add_recording_to_nwbfile(recording, nwbfile=nwbfile, write_as="raw", iterator_type=None)
 add_sorting_to_nwbfile(sorting, nwbfile=nwbfile, write_as="units")

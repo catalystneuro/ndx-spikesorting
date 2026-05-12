@@ -360,6 +360,14 @@ groups:
   - name: waveforms
     target_type: Waveforms
     doc: Link to the Waveforms from which these projections were computed.
+- neurodata_type_def: MetricExtension
+  neurodata_type_inc: DynamicTable
+  default_name: quality_metrics
+  doc: A DynamicTable storing metric values computed for each unit. Rows 
+    correspond to units in the same order as the linked units table. Each column
+    is a metric (e.g., snr, firing_rate, isi_violations_ratio). Column 
+    descriptions are automatically populated from SpikeInterface metric 
+    definitions.
 - neurodata_type_def: ValidUnitPeriods
   neurodata_type_inc: TimeIntervals
   default_name: valid_unit_periods
@@ -418,6 +426,10 @@ groups:
   - neurodata_type_inc: PCAProjectionsConcatenated
     doc: Concatenated-channels PCA projections of spikes (single-ragged).
     quantity: '?'
+  - neurodata_type_inc: MetricExtension
+    doc: Metric tables (e.g. quality_metrics, template_metrics). Multiple 
+      instances allowed.
+    quantity: '*'
   - neurodata_type_inc: ValidUnitPeriods
     doc: Valid unit periods extension data.
     quantity: '?'

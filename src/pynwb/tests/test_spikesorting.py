@@ -24,6 +24,7 @@ from ndx_spikesorting import (
     PCAProjectionsByChannel,
     PCAProjectionsConcatenated,
     ValidUnitPeriods,
+    MetricExtension,
     SpikeSortingExtensions,
     SpikeSortingContainer,
 )
@@ -1366,6 +1367,178 @@ class TestAmplitudeScalingsRoundtrip(TestCase):
                 read_amplitude_scalings.data_index.data[:],
                 amplitude_scalings.data_index.data[:],
             )
+
+
+def create_mock_metric_extension(name: str = "quality_metrics", num_units: int = 3, metric_names: list = None):
+    """Create a mock MetricExtension (DynamicTable) with metric columns."""
+    if metric_names is None:
+        metric_names = ["snr", "firing_rate", "isi_violations_ratio"]
+
+    columns = []
+    for metric_name in metric_names:
+        col_data = np.random.rand(num_units).astype(np.float64)
+        columns.append(
+            VectorData(name=metric_name, data=col_data, description=f"Metric column: {metric_name}")
+        )
+
+    metric_ext = MetricExtension(
+        name=name,
+        description=f"Metric table for {name}.",
+        columns=columns,
+    )
+    return metric_ext
+
+
+class TestMetricExtensionConstructor(TestCase):
+    """Unit tests for MetricExtension constructor."""
+
+    def test_constructor_default(self):
+        """Test that MetricExtension constructor sets values correctly."""
+        metric_ext = create_mock_metric_extension()
+
+        self.assertEqual(metric_ext.name, "quality_metrics")
+        self.assertIn("snr", metric_ext.colnames)
+        self.assertIn("firing_rate", metric_ext.colnames)
+        self.assertIn("isi_violations_ratio", metric_ext.colnames)
+        self.assertEqual(len(metric_ext["snr"].data), 3)
+
+    def test_constructor_custom_name(self):
+        """Test MetricExtension with a custom name and metrics."""
+        metric_ext = create_mock_metric_extension(
+            name="template_metrics",
+            num_units=5,
+            metric_names=["peak_to_valley", "half_width"],
+        )
+
+        self.assertEqual(metric_ext.name, "template_metrics")
+        self.assertIn("peak_to_valley", metric_ext.colnames)
+        self.assertIn("half_width", metric_ext.colnames)
+        self.assertEqual(len(metric_ext["peak_to_valley"].data), 5)
+
+    def test_constructor_single_metric(self):
+        """Test MetricExtension with a single metric column."""
+        metric_ext = create_mock_metric_extension(
+            num_units=10,
+            metric_names=["snr"],
+        )
+
+        self.assertEqual(len(metric_ext.colnames), 1)
+        self.assertEqual(len(metric_ext["snr"].data), 10)
+
+
+class TestMetricExtensionRoundtrip(TestCase):
+    """Roundtrip test for MetricExtension."""
+
+    def setUp(self):
+        self.nwbfile = set_up_nwbfile()
+        self.path = "test_metric_extension.nwb"
+
+    def tearDown(self):
+        remove_test_file(self.path)
+
+    def test_roundtrip_single(self):
+        """Test writing and reading a single MetricExtension."""
+        electrodes_region = self.nwbfile.create_electrode_table_region(
+            region=list(range(10)),
+            description="all electrodes",
+        )
+        units_region = create_units_region(self.nwbfile)
+
+        metric_ext = create_mock_metric_extension()
+
+        extensions = SpikeSortingExtensions(name="extensions")
+        extensions.add_metric_extensions(metric_ext)
+
+        container = SpikeSortingContainer(
+            name="spike_sorting",
+            sampling_frequency=30000.0,
+            electrodes=electrodes_region,
+            units_region=units_region,
+        )
+        container.spike_sorting_extensions = extensions
+
+        ecephys_module = self.nwbfile.create_processing_module(
+            name="ecephys",
+            description="Extracellular electrophysiology processing",
+        )
+        ecephys_module.add(container)
+
+        with NWBHDF5IO(self.path, mode="w") as io:
+            io.write(self.nwbfile)
+
+        with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
+            read_nwbfile = io.read()
+            read_container = read_nwbfile.processing["ecephys"]["spike_sorting"]
+            read_extensions = read_container.spike_sorting_extensions
+            read_metrics = read_extensions.metric_extensions
+
+            self.assertIn("quality_metrics", read_metrics)
+            read_metric = read_metrics["quality_metrics"]
+
+            for col_name in ["snr", "firing_rate", "isi_violations_ratio"]:
+                np.testing.assert_array_almost_equal(
+                    read_metric[col_name][:],
+                    metric_ext[col_name].data,
+                )
+
+    def test_roundtrip_multiple(self):
+        """Test writing and reading multiple MetricExtension tables."""
+        electrodes_region = self.nwbfile.create_electrode_table_region(
+            region=list(range(10)),
+            description="all electrodes",
+        )
+        units_region = create_units_region(self.nwbfile)
+
+        quality_metrics = create_mock_metric_extension(
+            name="quality_metrics",
+            metric_names=["snr", "firing_rate"],
+        )
+        template_metrics = create_mock_metric_extension(
+            name="template_metrics",
+            metric_names=["peak_to_valley", "half_width"],
+        )
+
+        extensions = SpikeSortingExtensions(name="extensions")
+        extensions.add_metric_extensions(quality_metrics)
+        extensions.add_metric_extensions(template_metrics)
+
+        container = SpikeSortingContainer(
+            name="spike_sorting",
+            sampling_frequency=30000.0,
+            electrodes=electrodes_region,
+            units_region=units_region,
+        )
+        container.spike_sorting_extensions = extensions
+
+        ecephys_module = self.nwbfile.create_processing_module(
+            name="ecephys",
+            description="Extracellular electrophysiology processing",
+        )
+        ecephys_module.add(container)
+
+        with NWBHDF5IO(self.path, mode="w") as io:
+            io.write(self.nwbfile)
+
+        with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
+            read_nwbfile = io.read()
+            read_container = read_nwbfile.processing["ecephys"]["spike_sorting"]
+            read_extensions = read_container.spike_sorting_extensions
+            read_metrics = read_extensions.metric_extensions
+
+            self.assertEqual(len(read_metrics), 2)
+            self.assertIn("quality_metrics", read_metrics)
+            self.assertIn("template_metrics", read_metrics)
+
+            for col_name in ["snr", "firing_rate"]:
+                np.testing.assert_array_almost_equal(
+                    read_metrics["quality_metrics"][col_name][:],
+                    quality_metrics[col_name].data,
+                )
+            for col_name in ["peak_to_valley", "half_width"]:
+                np.testing.assert_array_almost_equal(
+                    read_metrics["template_metrics"][col_name][:],
+                    template_metrics[col_name].data,
+                )
 
 
 def create_mock_valid_unit_periods(nwbfile: NWBFile, num_units: int = 3, periods_per_unit: int = 2):

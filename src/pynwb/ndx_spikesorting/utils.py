@@ -27,6 +27,7 @@ from ndx_spikesorting import (
     PCAProjectionsByChannel,
     PCAProjectionsConcatenated,
     ValidUnitPeriods,
+    MetricExtension,
     SpikeSortingExtensions,
     SpikeSortingContainer,
 )
@@ -340,6 +341,35 @@ def _convert_valid_unit_periods(
     )
 
 
+def _convert_metrics_extension(
+    sorting_analyzer: "SortingAnalyzer",
+    extension_names: list[str],
+    nwb_class: type,
+) -> dict[str, MetricExtension]:
+    extensions_dict = {}
+    for extension_name in extension_names:
+        ext = sorting_analyzer.get_extension(extension_name)
+        metrics_df = ext.get_data()  # pd.DataFrame indexed by unit_id
+        descriptions = ext.get_metric_column_descriptions()
+
+        columns = []
+        for col_name in metrics_df.columns:
+            col_data = metrics_df[col_name].values
+            # Convert to float; NaNs are preserved
+            col_data = col_data.astype(float)
+            col_desc = descriptions.get(col_name, f"Metric column: {col_name}")
+            columns.append(
+                VectorData(name=col_name, data=col_data, description=col_desc)
+            )
+        extensions_dict[extension_name] = nwb_class(
+            name=extension_name,
+            description=f"Metric table for {extension_name}.",
+            columns=columns,
+        )
+
+    return extensions_dict
+
+
 def _convert_pca_by_channel(
     sorting_analyzer: "SortingAnalyzer",
     nwbfile: NWBFile,
@@ -519,6 +549,10 @@ def _convert_all_extensions(sorting_analyzer, nwbfile):  # noqa: C901
         converted["valid_unit_periods"] = _convert_valid_unit_periods(
             sorting_analyzer, "valid_unit_periods", ValidUnitPeriods, nwbfile.units
         )
+    if _has("quality_metrics") or _has("template_metrics") or _has("spiketrain_metrics"):
+        converted["metric_extensions"] = _convert_metrics_extension(
+            sorting_analyzer, ["quality_metrics", "template_metrics", "spiketrain_metrics"], MetricExtension
+        )
 
     return converted
 
@@ -528,7 +562,10 @@ def _build_extensions(sorting_analyzer, nwbfile):
     converted = _convert_all_extensions(sorting_analyzer, nwbfile)
     extensions = SpikeSortingExtensions(name="extensions")
     for attr, obj in converted.items():
-        setattr(extensions, attr, obj)
+        if attr == "metric_extensions":
+            extensions.add_metric_extensions(obj)
+        else:
+            setattr(extensions, attr, obj)
     return extensions
 
 
@@ -735,7 +772,8 @@ def read_sorting_analyzer_from_nwb(
             _load_amplitude_scalings(extensions, sorting_analyzer)
             _load_spike_locations(extensions, sorting_analyzer)
             _load_pca_projections(extensions, sorting_analyzer)
-            _load_valid_unit_periods_from_nwb(extensions, sorting_analyzer)
+            _load_valid_unit_periods(extensions, sorting_analyzer)
+            _load_metric_extensions(extensions, sorting_analyzer)
 
     return sorting_analyzer
 
@@ -1022,7 +1060,7 @@ def _load_amplitude_scalings(extensions, sorting_analyzer: "SortingAnalyzer") ->
     sorting_analyzer.extensions["amplitude_scalings"] = ext
 
 
-def _load_valid_unit_periods_from_nwb(extensions, sorting_analyzer):
+def _load_valid_unit_periods(extensions, sorting_analyzer):
     """Instantiate the valid_unit_periods extension if present in the NWB container.
 
     **NWB** stores valid unit periods as a ``TimeIntervals`` table with columns:
@@ -1064,6 +1102,59 @@ def _load_valid_unit_periods_from_nwb(extensions, sorting_analyzer):
     ext.data["valid_unit_periods"] = valid_periods
     ext.run_info = {"run_completed": True, "runtime_s": 0.0}
     sorting_analyzer.extensions["valid_unit_periods"] = ext
+
+
+def _load_metric_extensions(extensions, sorting_analyzer):
+    """Load MetricExtension tables and instantiate corresponding SI metric extensions.
+
+    Each MetricExtension in NWB is a DynamicTable whose name matches a
+    SpikeInterface metric extension name (e.g., "quality_metrics",
+    "template_metrics", "spiketrain_metrics"). Columns are matched against
+    known BaseMetric subclasses to determine which metrics were computed.
+    """
+    import pandas as pd
+    from spikeinterface.core.sortinganalyzer import get_extension_class
+
+    metric_tables = getattr(extensions, "metric_extensions", None)
+    if not metric_tables:
+        return
+
+    for nwb_table in metric_tables.values():
+        table_name = nwb_table.name
+        ext_class = get_extension_class(table_name)
+        if ext_class is None:
+            continue
+
+        unit_ids = sorting_analyzer.unit_ids
+        columns = list(nwb_table.colnames)
+
+        data = {}
+        for col in columns:
+            data[col] = nwb_table[col].data[:]
+
+        metrics_df = pd.DataFrame(data, index=unit_ids)
+
+        # Determine metric_names from columns by matching against known metrics
+        metric_names = []
+        for m in ext_class.metric_list:
+            if all(col in columns for col in m.metric_columns):
+                metric_names.append(m.metric_name)
+
+        # Build params with defaults for matched metrics
+        default_params = ext_class.get_default_metric_params()
+        metric_params = {k: v for k, v in default_params.items() if k in metric_names}
+
+        ext = ext_class(sorting_analyzer)
+        ext.params = {
+            "metric_names": metric_names,
+            "metric_params": metric_params,
+            "metrics_to_compute": metric_names,
+            "delete_existing_metrics": False,
+            "periods": None,
+        }
+        ext.data["metrics"] = metrics_df
+        ext.run_info = {"run_completed": True, "runtime_s": 0.0}
+        sorting_analyzer.extensions[table_name] = ext
 
 
 def _load_pca_projections(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
