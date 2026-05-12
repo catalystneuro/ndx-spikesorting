@@ -1799,6 +1799,7 @@ class TestReadSortingAnalyzerFromNwb(TestCase):
             io.write(nwbfile)
 
     def tearDown(self):
+        del self.sorting_analyzer, self.recording, self.sorting
         remove_test_file(self.path)
 
     def test_loads_all_extensions(self):

@@ -630,64 +630,64 @@ def read_sorting_analyzer_from_nwb(
     nwbfile_path = Path(nwbfile_path)
 
     # -- Open NWB and locate the container --
-    io = NWBHDF5IO(nwbfile_path, mode="r", load_namespaces=True)
-    nwbfile = io.read()
+    with NWBHDF5IO(nwbfile_path, mode="r", load_namespaces=True) as io:
+        nwbfile = io.read()
 
-    parts = container_path.split("/")
-    obj = nwbfile.processing[parts[0]]
-    for part in parts[1:]:
-        obj = obj[part]
-    container = obj
-    sampling_frequency = container.sampling_frequency
+        parts = container_path.split("/")
+        obj = nwbfile.processing[parts[0]]
+        for part in parts[1:]:
+            obj = obj[part]
+        container = obj
+        sampling_frequency = container.sampling_frequency
 
-    # -- Load sorting --
-    sorting = NwbSortingExtractor(
-        file_path=nwbfile_path,
-        sampling_frequency=sampling_frequency,
-        t_start=0.0,
-    )
-
-    # -- Load recording (if linked) --
-    recording = None
-    if container.source_electrical_series is not None:
-        es = container.source_electrical_series
-        es_path = f"acquisition/{es.name}"
-        recording = NwbRecordingExtractor(file_path=nwbfile_path, electrical_series_path=es_path)
-
-    # -- Build sparsity from stored mask --
-    sparsity = None
-    if container.sparsity_mask is not None:
-        channel_ids = recording.channel_ids if recording is not None else np.array(container.electrodes.data[:])
-        sparsity = ChannelSparsity(
-            mask=np.array(container.sparsity_mask[:], dtype=bool),
-            unit_ids=sorting.unit_ids,
-            channel_ids=channel_ids,
+        # -- Load sorting --
+        sorting = NwbSortingExtractor(
+            file_path=nwbfile_path,
+            sampling_frequency=sampling_frequency,
+            t_start=0.0,
         )
 
-    # -- Create in-memory SortingAnalyzer --
-    sorting_analyzer = create_sorting_analyzer(
-        sorting=sorting,
-        recording=recording,
-        format="memory",
-        sparse=False,
-        sparsity=sparsity,
-    )
+        # -- Load recording (if linked) --
+        recording = None
+        if container.source_electrical_series is not None:
+            es = container.source_electrical_series
+            es_path = f"acquisition/{es.name}"
+            recording = NwbRecordingExtractor(file_path=nwbfile_path, electrical_series_path=es_path)
 
-    # -- Instantiate precomputed extensions --
-    extensions = container.spike_sorting_extensions
-    if extensions is not None:
-        _load_random_spikes(extensions, sorting_analyzer)
-        _load_waveforms(extensions, sorting_analyzer)
-        _load_templates(extensions, sorting_analyzer)
-        _load_noise_levels(extensions, sorting_analyzer)
-        _load_unit_locations(extensions, sorting_analyzer)
-        _load_correlograms(extensions, sorting_analyzer)
-        _load_isi_histograms(extensions, sorting_analyzer)
-        _load_template_similarity(extensions, sorting_analyzer)
-        _load_spike_amplitudes(extensions, sorting_analyzer)
-        _load_amplitude_scalings(extensions, sorting_analyzer)
-        _load_spike_locations(extensions, sorting_analyzer)
-        _load_pca_projections(extensions, sorting_analyzer)
+        # -- Build sparsity from stored mask --
+        sparsity = None
+        if container.sparsity_mask is not None:
+            channel_ids = recording.channel_ids if recording is not None else np.array(container.electrodes.data[:])
+            sparsity = ChannelSparsity(
+                mask=np.array(container.sparsity_mask[:], dtype=bool),
+                unit_ids=sorting.unit_ids,
+                channel_ids=channel_ids,
+            )
+
+        # -- Create in-memory SortingAnalyzer --
+        sorting_analyzer = create_sorting_analyzer(
+            sorting=sorting,
+            recording=recording,
+            format="memory",
+            sparse=False,
+            sparsity=sparsity,
+        )
+
+        # -- Instantiate precomputed extensions --
+        extensions = container.spike_sorting_extensions
+        if extensions is not None:
+            _load_random_spikes(extensions, sorting_analyzer)
+            _load_waveforms(extensions, sorting_analyzer)
+            _load_templates(extensions, sorting_analyzer)
+            _load_noise_levels(extensions, sorting_analyzer)
+            _load_unit_locations(extensions, sorting_analyzer)
+            _load_correlograms(extensions, sorting_analyzer)
+            _load_isi_histograms(extensions, sorting_analyzer)
+            _load_template_similarity(extensions, sorting_analyzer)
+            _load_spike_amplitudes(extensions, sorting_analyzer)
+            _load_amplitude_scalings(extensions, sorting_analyzer)
+            _load_spike_locations(extensions, sorting_analyzer)
+            _load_pca_projections(extensions, sorting_analyzer)
 
     return sorting_analyzer
 
