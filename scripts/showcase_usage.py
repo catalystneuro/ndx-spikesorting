@@ -15,7 +15,7 @@ from pathlib import Path
 
 from spikeinterface_gui import run_mainwindow
 
-from nwb_to_sorting_analyzer import read_sorting_analyzer_from_nwb
+from ndx_spikesorting import read_sorting_analyzer_from_nwb
 
 nwb_path = Path(__file__).parent / "sorting_analyzer_test.nwb"
 

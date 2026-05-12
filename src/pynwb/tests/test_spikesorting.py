@@ -23,6 +23,8 @@ from ndx_spikesorting import (
     SpikeLocations,
     PCAProjectionsByChannel,
     PCAProjectionsConcatenated,
+    ValidUnitPeriods,
+    MetricExtension,
     SpikeSortingExtensions,
     SpikeSortingContainer,
 )
@@ -1367,6 +1369,286 @@ class TestAmplitudeScalingsRoundtrip(TestCase):
             )
 
 
+def create_mock_metric_extension(name: str = "quality_metrics", num_units: int = 3, metric_names: list = None):
+    """Create a mock MetricExtension (DynamicTable) with metric columns."""
+    if metric_names is None:
+        metric_names = ["snr", "firing_rate", "isi_violations_ratio"]
+
+    columns = []
+    for metric_name in metric_names:
+        col_data = np.random.rand(num_units).astype(np.float64)
+        columns.append(
+            VectorData(name=metric_name, data=col_data, description=f"Metric column: {metric_name}")
+        )
+
+    metric_ext = MetricExtension(
+        name=name,
+        description=f"Metric table for {name}.",
+        columns=columns,
+    )
+    return metric_ext
+
+
+class TestMetricExtensionConstructor(TestCase):
+    """Unit tests for MetricExtension constructor."""
+
+    def test_constructor_default(self):
+        """Test that MetricExtension constructor sets values correctly."""
+        metric_ext = create_mock_metric_extension()
+
+        self.assertEqual(metric_ext.name, "quality_metrics")
+        self.assertIn("snr", metric_ext.colnames)
+        self.assertIn("firing_rate", metric_ext.colnames)
+        self.assertIn("isi_violations_ratio", metric_ext.colnames)
+        self.assertEqual(len(metric_ext["snr"].data), 3)
+
+    def test_constructor_custom_name(self):
+        """Test MetricExtension with a custom name and metrics."""
+        metric_ext = create_mock_metric_extension(
+            name="template_metrics",
+            num_units=5,
+            metric_names=["peak_to_valley", "half_width"],
+        )
+
+        self.assertEqual(metric_ext.name, "template_metrics")
+        self.assertIn("peak_to_valley", metric_ext.colnames)
+        self.assertIn("half_width", metric_ext.colnames)
+        self.assertEqual(len(metric_ext["peak_to_valley"].data), 5)
+
+    def test_constructor_single_metric(self):
+        """Test MetricExtension with a single metric column."""
+        metric_ext = create_mock_metric_extension(
+            num_units=10,
+            metric_names=["snr"],
+        )
+
+        self.assertEqual(len(metric_ext.colnames), 1)
+        self.assertEqual(len(metric_ext["snr"].data), 10)
+
+
+class TestMetricExtensionRoundtrip(TestCase):
+    """Roundtrip test for MetricExtension."""
+
+    def setUp(self):
+        self.nwbfile = set_up_nwbfile()
+        self.path = "test_metric_extension.nwb"
+
+    def tearDown(self):
+        remove_test_file(self.path)
+
+    def test_roundtrip_single(self):
+        """Test writing and reading a single MetricExtension."""
+        electrodes_region = self.nwbfile.create_electrode_table_region(
+            region=list(range(10)),
+            description="all electrodes",
+        )
+        units_region = create_units_region(self.nwbfile)
+
+        metric_ext = create_mock_metric_extension()
+
+        extensions = SpikeSortingExtensions(name="extensions")
+        extensions.add_metric_extensions(metric_ext)
+
+        container = SpikeSortingContainer(
+            name="spike_sorting",
+            sampling_frequency=30000.0,
+            electrodes=electrodes_region,
+            units_region=units_region,
+        )
+        container.spike_sorting_extensions = extensions
+
+        ecephys_module = self.nwbfile.create_processing_module(
+            name="ecephys",
+            description="Extracellular electrophysiology processing",
+        )
+        ecephys_module.add(container)
+
+        with NWBHDF5IO(self.path, mode="w") as io:
+            io.write(self.nwbfile)
+
+        with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
+            read_nwbfile = io.read()
+            read_container = read_nwbfile.processing["ecephys"]["spike_sorting"]
+            read_extensions = read_container.spike_sorting_extensions
+            read_metrics = read_extensions.metric_extensions
+
+            self.assertIn("quality_metrics", read_metrics)
+            read_metric = read_metrics["quality_metrics"]
+
+            for col_name in ["snr", "firing_rate", "isi_violations_ratio"]:
+                np.testing.assert_array_almost_equal(
+                    read_metric[col_name][:],
+                    metric_ext[col_name].data,
+                )
+
+    def test_roundtrip_multiple(self):
+        """Test writing and reading multiple MetricExtension tables."""
+        electrodes_region = self.nwbfile.create_electrode_table_region(
+            region=list(range(10)),
+            description="all electrodes",
+        )
+        units_region = create_units_region(self.nwbfile)
+
+        quality_metrics = create_mock_metric_extension(
+            name="quality_metrics",
+            metric_names=["snr", "firing_rate"],
+        )
+        template_metrics = create_mock_metric_extension(
+            name="template_metrics",
+            metric_names=["peak_to_valley", "half_width"],
+        )
+
+        extensions = SpikeSortingExtensions(name="extensions")
+        extensions.add_metric_extensions(quality_metrics)
+        extensions.add_metric_extensions(template_metrics)
+
+        container = SpikeSortingContainer(
+            name="spike_sorting",
+            sampling_frequency=30000.0,
+            electrodes=electrodes_region,
+            units_region=units_region,
+        )
+        container.spike_sorting_extensions = extensions
+
+        ecephys_module = self.nwbfile.create_processing_module(
+            name="ecephys",
+            description="Extracellular electrophysiology processing",
+        )
+        ecephys_module.add(container)
+
+        with NWBHDF5IO(self.path, mode="w") as io:
+            io.write(self.nwbfile)
+
+        with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
+            read_nwbfile = io.read()
+            read_container = read_nwbfile.processing["ecephys"]["spike_sorting"]
+            read_extensions = read_container.spike_sorting_extensions
+            read_metrics = read_extensions.metric_extensions
+
+            self.assertEqual(len(read_metrics), 2)
+            self.assertIn("quality_metrics", read_metrics)
+            self.assertIn("template_metrics", read_metrics)
+
+            for col_name in ["snr", "firing_rate"]:
+                np.testing.assert_array_almost_equal(
+                    read_metrics["quality_metrics"][col_name][:],
+                    quality_metrics[col_name].data,
+                )
+            for col_name in ["peak_to_valley", "half_width"]:
+                np.testing.assert_array_almost_equal(
+                    read_metrics["template_metrics"][col_name][:],
+                    template_metrics[col_name].data,
+                )
+
+
+def create_mock_valid_unit_periods(nwbfile: NWBFile, num_units: int = 3, periods_per_unit: int = 2):
+    """Create mock ValidUnitPeriods with time intervals for each unit."""
+    start_times = []
+    stop_times = []
+    unit_indices = []
+
+    for unit_idx in range(num_units):
+        for p in range(periods_per_unit):
+            start = unit_idx * 10.0 + p * 3.0
+            stop = start + 2.0
+            start_times.append(start)
+            stop_times.append(stop)
+            unit_indices.append(unit_idx)
+
+    units = DynamicTableRegion(
+        name="unit",
+        data=unit_indices,
+        description="Reference to units table for each valid period.",
+        table=nwbfile.units,
+    )
+
+    valid_unit_periods = ValidUnitPeriods(
+        name="valid_unit_periods",
+        description="Valid periods for each unit.",
+        columns=[
+            VectorData(name="start_time", data=start_times, description="Start time of each valid period."),
+            VectorData(name="stop_time", data=stop_times, description="Stop time of each valid period."),
+            units,
+        ],
+    )
+    return valid_unit_periods
+
+
+class TestValidUnitPeriodsConstructor(TestCase):
+    """Unit tests for ValidUnitPeriods constructor."""
+
+    def test_constructor(self):
+        """Test that ValidUnitPeriods constructor sets values correctly."""
+        nwbfile = set_up_nwbfile()
+        valid_periods = create_mock_valid_unit_periods(nwbfile)
+
+        self.assertEqual(valid_periods.name, "valid_unit_periods")
+        # 3 units * 2 periods each = 6 rows
+        self.assertEqual(len(valid_periods["start_time"].data), 6)
+        self.assertEqual(len(valid_periods["stop_time"].data), 6)
+        self.assertEqual(len(valid_periods["unit"].data), 6)
+
+
+class TestValidUnitPeriodsRoundtrip(TestCase):
+    """Roundtrip test for ValidUnitPeriods."""
+
+    def setUp(self):
+        self.nwbfile = set_up_nwbfile()
+        self.path = "test_valid_unit_periods.nwb"
+
+    def tearDown(self):
+        remove_test_file(self.path)
+
+    def test_roundtrip(self):
+        """Test writing and reading ValidUnitPeriods."""
+        electrodes_region = self.nwbfile.create_electrode_table_region(
+            region=list(range(10)),
+            description="all electrodes",
+        )
+        units_region = create_units_region(self.nwbfile)
+
+        valid_periods = create_mock_valid_unit_periods(self.nwbfile)
+
+        extensions = SpikeSortingExtensions(name="extensions")
+        extensions.valid_unit_periods = valid_periods
+
+        container = SpikeSortingContainer(
+            name="spike_sorting",
+            sampling_frequency=30000.0,
+            electrodes=electrodes_region,
+            units_region=units_region,
+        )
+        container.spike_sorting_extensions = extensions
+
+        ecephys_module = self.nwbfile.create_processing_module(
+            name="ecephys",
+            description="Extracellular electrophysiology processing",
+        )
+        ecephys_module.add(container)
+
+        with NWBHDF5IO(self.path, mode="w") as io:
+            io.write(self.nwbfile)
+
+        with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
+            read_nwbfile = io.read()
+            read_container = read_nwbfile.processing["ecephys"]["spike_sorting"]
+            read_extensions = read_container.spike_sorting_extensions
+            read_valid_periods = read_extensions.valid_unit_periods
+
+            np.testing.assert_array_almost_equal(
+                read_valid_periods["start_time"][:],
+                valid_periods["start_time"].data,
+            )
+            np.testing.assert_array_almost_equal(
+                read_valid_periods["stop_time"][:],
+                valid_periods["stop_time"].data,
+            )
+            np.testing.assert_array_equal(
+                read_valid_periods["unit"].data[:],
+                valid_periods["unit"].data,
+            )
+
+
 class TestPCAProjectionsByChannelRoundtrip(TestCase):
     """Roundtrip test for PCAProjectionsByChannel (double-ragged)."""
 
@@ -1616,3 +1898,279 @@ class TestSpikeSortingContainerRoundtripPyNWB(NWBH5IOFlexMixin, TestCase):
 
     def getContainer(self, nwbfile: NWBFile):
         return nwbfile.processing["ecephys"]["spike_sorting"]
+
+
+# ---------------------------------------------------------------------------
+# Integration tests for add_sorting_analyzer_to_nwbfile / read_sorting_analyzer_from_nwb
+# ---------------------------------------------------------------------------
+
+
+def _create_sorting_analyzer(compute_all: bool = True):
+    """Create a SortingAnalyzer with mock data and optionally compute all extensions."""
+    from spikeinterface.core import create_sorting_analyzer, generate_ground_truth_recording
+
+    recording, sorting = generate_ground_truth_recording(
+        durations=[5.0],
+        num_units=5,
+        num_channels=10,
+        seed=42,
+    )
+    sorting_analyzer = create_sorting_analyzer(
+        sorting=sorting,
+        recording=recording,
+        format="memory",
+        sparse=True,
+    )
+    if compute_all:
+        sorting_analyzer.compute(
+            {
+                "random_spikes": {"max_spikes_per_unit": 10, "seed": 42},
+                "waveforms": {},
+                "templates": {},
+                "noise_levels": {},
+                "unit_locations": {"method": "monopolar_triangulation"},
+                "correlograms": {},
+                "principal_components": {"n_components": 3},
+                "isi_histograms": {},
+                "template_similarity": {},
+                "spike_amplitudes": {},
+                "amplitude_scalings": {},
+                "spike_locations": {"method": "grid_convolution"},
+            }
+        )
+    return sorting_analyzer, recording, sorting
+
+
+def _create_nwbfile_with_recording_and_sorting(recording, sorting):
+    """Create an NWBFile populated with recording and sorting via neuroconv."""
+    from datetime import datetime, timezone
+
+    from neuroconv.tools.spikeinterface import add_recording_to_nwbfile, add_sorting_to_nwbfile
+
+    nwbfile = NWBFile(
+        session_description="Test",
+        identifier=f"test_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+        session_start_time=datetime.now(timezone.utc),
+    )
+    add_recording_to_nwbfile(recording, nwbfile=nwbfile, write_as="raw", iterator_type=None)
+    add_sorting_to_nwbfile(sorting, nwbfile=nwbfile, write_as="units")
+    return nwbfile
+
+
+class TestAddSortingAnalyzerToNwbfile(TestCase):
+    """Tests for add_sorting_analyzer_to_nwbfile."""
+
+    def setUp(self):
+        from ndx_spikesorting import add_sorting_analyzer_to_nwbfile
+
+        self.add_fn = add_sorting_analyzer_to_nwbfile
+        self.sorting_analyzer, self.recording, self.sorting = _create_sorting_analyzer()
+        self.nwbfile = _create_nwbfile_with_recording_and_sorting(self.recording, self.sorting)
+        self.path = "test_add_sorting_analyzer.nwb"
+
+    def tearDown(self):
+        remove_test_file(self.path)
+
+    def test_adds_container_to_ecephys(self):
+        """Container is placed in processing['ecephys']['spike_sorting']."""
+        self.add_fn(self.sorting_analyzer, self.nwbfile)
+
+        self.assertIn("ecephys", self.nwbfile.processing)
+        container = self.nwbfile.processing["ecephys"]["spike_sorting"]
+        self.assertEqual(container.sampling_frequency, self.sorting_analyzer.sampling_frequency)
+
+    def test_all_extensions_present(self):
+        """All computed extensions appear on the NWB container."""
+        self.add_fn(self.sorting_analyzer, self.nwbfile)
+        ext = self.nwbfile.processing["ecephys"]["spike_sorting"].spike_sorting_extensions
+
+        self.assertIsNotNone(ext.random_spikes)
+        self.assertIsNotNone(ext.waveforms)
+        self.assertIsNotNone(ext.templates)
+        self.assertIsNotNone(ext.noise_levels)
+        self.assertIsNotNone(ext.unit_locations)
+        self.assertIsNotNone(ext.correlograms)
+        self.assertIsNotNone(ext.isi_histograms)
+        self.assertIsNotNone(ext.template_similarity)
+        self.assertIsNotNone(ext.spike_amplitudes)
+        self.assertIsNotNone(ext.spike_locations)
+        self.assertIsNotNone(ext.amplitude_scalings)
+        self.assertIsNotNone(ext.pca_projections_by_channel)
+
+    def test_sparsity_mask_stored(self):
+        """Sparsity mask is written when the analyzer has sparsity."""
+        self.add_fn(self.sorting_analyzer, self.nwbfile)
+        container = self.nwbfile.processing["ecephys"]["spike_sorting"]
+
+        expected_mask = self.sorting_analyzer.sparsity.mask
+        np.testing.assert_array_equal(container.sparsity_mask, expected_mask)
+
+    def test_electrical_series_linked(self):
+        """source_electrical_series is auto-detected when exactly one exists."""
+        self.add_fn(self.sorting_analyzer, self.nwbfile)
+        container = self.nwbfile.processing["ecephys"]["spike_sorting"]
+
+        self.assertIsNotNone(container.source_electrical_series)
+
+    def test_writes_to_disk(self):
+        """File written with add_sorting_analyzer_to_nwbfile can be re-read."""
+        self.add_fn(self.sorting_analyzer, self.nwbfile)
+
+        with NWBHDF5IO(self.path, mode="w") as io:
+            io.write(self.nwbfile)
+
+        with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
+            read_nwb = io.read()
+            container = read_nwb.processing["ecephys"]["spike_sorting"]
+            self.assertEqual(container.sampling_frequency, self.sorting_analyzer.sampling_frequency)
+            ext = container.spike_sorting_extensions
+            self.assertIsNotNone(ext.templates)
+
+    def test_only_computed_extensions_added(self):
+        """When only a subset of extensions is computed, only those are stored."""
+        sa, rec, sort = _create_sorting_analyzer(compute_all=False)
+        sa.compute({"random_spikes": {"max_spikes_per_unit": 10, "seed": 42}, "templates": {}})
+
+        nwbfile = _create_nwbfile_with_recording_and_sorting(rec, sort)
+        self.add_fn(sa, nwbfile)
+        ext = nwbfile.processing["ecephys"]["spike_sorting"].spike_sorting_extensions
+
+        self.assertIsNotNone(ext.random_spikes)
+        self.assertIsNotNone(ext.templates)
+        self.assertIsNone(ext.noise_levels)
+        self.assertIsNone(ext.correlograms)
+
+    def test_error_no_units(self):
+        """ValueError raised when nwbfile has no units table."""
+        from datetime import datetime, timezone
+
+        from neuroconv.tools.spikeinterface import add_recording_to_nwbfile
+
+        nwbfile = NWBFile(
+            session_description="Test",
+            identifier="no_units",
+            session_start_time=datetime.now(timezone.utc),
+        )
+        add_recording_to_nwbfile(self.recording, nwbfile=nwbfile, write_as="raw", iterator_type=None)
+
+        with self.assertRaises(ValueError):
+            self.add_fn(self.sorting_analyzer, nwbfile)
+
+    def test_reuses_existing_ecephys_module(self):
+        """If 'ecephys' processing module already exists, it is reused."""
+        self.nwbfile.create_processing_module(name="ecephys", description="pre-existing")
+        self.add_fn(self.sorting_analyzer, self.nwbfile)
+
+        self.assertEqual(self.nwbfile.processing["ecephys"].description, "pre-existing")
+        self.assertIn("spike_sorting", self.nwbfile.processing["ecephys"].data_interfaces)
+
+
+class TestReadSortingAnalyzerFromNwb(TestCase):
+    """Tests for read_sorting_analyzer_from_nwb."""
+
+    def setUp(self):
+        from ndx_spikesorting import add_sorting_analyzer_to_nwbfile, read_sorting_analyzer_from_nwb
+
+        self.read_fn = read_sorting_analyzer_from_nwb
+        self.sorting_analyzer, self.recording, self.sorting = _create_sorting_analyzer()
+        nwbfile = _create_nwbfile_with_recording_and_sorting(self.recording, self.sorting)
+        add_sorting_analyzer_to_nwbfile(self.sorting_analyzer, nwbfile)
+
+        self.path = "test_read_sorting_analyzer.nwb"
+        with NWBHDF5IO(self.path, mode="w") as io:
+            io.write(nwbfile)
+
+    def tearDown(self):
+        del self.sorting_analyzer, self.recording, self.sorting
+        remove_test_file(self.path)
+
+    def test_loads_all_extensions(self):
+        """All 12 extensions are restored from the NWB file."""
+        sa = self.read_fn(self.path)
+        expected = {
+            "random_spikes", "waveforms", "templates", "noise_levels",
+            "unit_locations", "correlograms", "isi_histograms",
+            "template_similarity", "spike_amplitudes", "amplitude_scalings",
+            "spike_locations", "principal_components",
+        }
+        self.assertEqual(set(sa.extensions.keys()), expected)
+
+    def test_unit_ids_match(self):
+        """Unit IDs from the read analyzer match the original sorting."""
+        sa = self.read_fn(self.path)
+        # NwbSortingExtractor returns string IDs
+        original_ids = [str(uid) for uid in self.sorting_analyzer.unit_ids]
+        np.testing.assert_array_equal(sa.unit_ids, original_ids)
+
+    def test_num_channels(self):
+        """Number of channels matches the original recording."""
+        sa = self.read_fn(self.path)
+        self.assertEqual(sa.get_num_channels(), self.sorting_analyzer.get_num_channels())
+
+    def test_sampling_frequency(self):
+        """Sampling frequency matches the original."""
+        sa = self.read_fn(self.path)
+        self.assertEqual(sa.sampling_frequency, self.sorting_analyzer.sampling_frequency)
+
+    def test_sparsity_restored(self):
+        """Sparsity mask is correctly restored."""
+        sa = self.read_fn(self.path)
+        self.assertIsNotNone(sa.sparsity)
+        np.testing.assert_array_equal(sa.sparsity.mask, self.sorting_analyzer.sparsity.mask)
+
+    def test_templates_shape(self):
+        """Template shapes match (num_units, num_samples, num_channels)."""
+        sa = self.read_fn(self.path)
+        original = self.sorting_analyzer.get_extension("templates").data["average"]
+        restored = sa.get_extension("templates").data["average"]
+        self.assertEqual(restored.shape, original.shape)
+
+    def test_templates_values(self):
+        """Template values are close to the original after roundtrip."""
+        sa = self.read_fn(self.path)
+        original = self.sorting_analyzer.get_extension("templates").data["average"]
+        restored = sa.get_extension("templates").data["average"]
+        np.testing.assert_array_almost_equal(restored, original, decimal=5)
+
+    def test_random_spikes_count(self):
+        """Number of random spikes matches."""
+        sa = self.read_fn(self.path)
+        original_count = len(self.sorting_analyzer.get_extension("random_spikes").get_random_spikes())
+        restored_count = len(sa.get_extension("random_spikes").get_random_spikes())
+        self.assertEqual(restored_count, original_count)
+
+    def test_waveforms_shape(self):
+        """Waveform data shape is preserved."""
+        sa = self.read_fn(self.path)
+        restored_wf = sa.get_extension("waveforms").data["waveforms"]
+        original_wf = self.sorting_analyzer.get_extension("waveforms").data["waveforms"]
+        self.assertEqual(restored_wf.shape[0], original_wf.shape[0])  # num spikes
+        self.assertEqual(restored_wf.shape[1], original_wf.shape[1])  # num samples
+
+    def test_noise_levels(self):
+        """Noise levels values match."""
+        sa = self.read_fn(self.path)
+        original = self.sorting_analyzer.get_extension("noise_levels").data["noise_levels"]
+        restored = sa.get_extension("noise_levels").data["noise_levels"]
+        np.testing.assert_array_almost_equal(restored, original, decimal=5)
+
+    def test_correlograms_shape(self):
+        """Correlogram data shape is preserved."""
+        sa = self.read_fn(self.path)
+        original = self.sorting_analyzer.get_extension("correlograms").data["ccgs"]
+        restored = sa.get_extension("correlograms").data["ccgs"]
+        self.assertEqual(restored.shape, original.shape)
+
+    def test_pca_projections_shape(self):
+        """PCA projection shape is preserved."""
+        sa = self.read_fn(self.path)
+        restored_pca = sa.get_extension("principal_components").data["pca_projection"]
+        original_pca = self.sorting_analyzer.get_extension("principal_components").data["pca_projection"]
+        self.assertEqual(restored_pca.shape[0], original_pca.shape[0])  # num spikes
+        self.assertEqual(restored_pca.shape[1], original_pca.shape[1])  # num components
+
+    def test_custom_container_path(self):
+        """read_sorting_analyzer_from_nwb works with explicit container_path."""
+        sa = self.read_fn(self.path, container_path="ecephys/spike_sorting")
+        self.assertIsNotNone(sa)
+        self.assertIn("templates", sa.extensions)
