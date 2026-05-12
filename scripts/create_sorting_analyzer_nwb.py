@@ -62,9 +62,20 @@ sampling_frequency = recording.sampling_frequency
 user_defined_periods = np.array([], dtype=unit_period_dtype)
 for unit_index in range(num_units):
     # First valid period: 2s–10s
-    user_defined_periods = np.append(user_defined_periods, np.array([(0, int(2.0 * sampling_frequency), int(10.0 * sampling_frequency), unit_index)], dtype=unit_period_dtype))
+    user_defined_periods = np.append(
+        user_defined_periods,
+        np.array(
+            [(0, int(2.0 * sampling_frequency), int(10.0 * sampling_frequency), unit_index)],
+            dtype=unit_period_dtype)
+        )
     # Second valid period: 15s–25s
-    user_defined_periods = np.append(user_defined_periods, np.array([(0, int(15.0 * sampling_frequency), int(25.0 * sampling_frequency), unit_index)], dtype=unit_period_dtype))
+    user_defined_periods = np.append(
+        user_defined_periods,
+        np.array(
+            [(0, int(15.0 * sampling_frequency), int(25.0 * sampling_frequency), unit_index)],
+            dtype=unit_period_dtype
+        )
+    )
 
 sorting_analyzer.compute(
     "valid_unit_periods",
