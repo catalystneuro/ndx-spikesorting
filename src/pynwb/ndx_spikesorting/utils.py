@@ -1,10 +1,16 @@
+from __future__ import annotations
+
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from hdmf.common import VectorData, VectorIndex, DynamicTableRegion
 from pynwb import NWBFile
 from pynwb.ecephys import ElectricalSeries
+
+if TYPE_CHECKING:
+    from spikeinterface.core import SortingAnalyzer
 
 from ndx_spikesorting import (
     Templates,
