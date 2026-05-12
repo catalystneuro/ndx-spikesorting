@@ -46,6 +46,7 @@ test = [
     "spikeinterface>=0.104.0",
     "scipy",
     "scikit-learn",
+    "neuroconv",
 ]
 
 docs = [
