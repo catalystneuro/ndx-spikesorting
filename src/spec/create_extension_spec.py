@@ -561,6 +561,8 @@ def main():
             "Each column is a metric (e.g., snr, firing_rate, isi_violations_ratio). "
             "Column descriptions are automatically populated from SpikeInterface metric definitions."
         ),
+    )
+
     # ValidUnitPeriods: valid time periods for each unit using TimeIntervals
     valid_unit_periods = NWBGroupSpec(
         neurodata_type_def="ValidUnitPeriods",
