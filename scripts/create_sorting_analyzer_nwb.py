@@ -5,44 +5,26 @@ This script demonstrates how to:
 1. Generate mock recording and sorting data using SpikeInterface
 2. Create a SortingAnalyzer and compute extensions (random_spikes, templates)
 3. Write recording and sorting to NWB via neuroconv
-4. Add ndx-spikesorting extension data (templates, random_spikes, sparsity) on top
-5. Link the SpikeSortingContainer to the ElectricalSeries for recording mode
+4. Add ndx-spikesorting extension data via add_sorting_analyzer_to_nwbfile
 """
 
 from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
-from hdmf.common import VectorData, VectorIndex, DynamicTableRegion
 from neuroconv.tools.spikeinterface import add_recording_to_nwbfile, add_sorting_to_nwbfile
 from pynwb import NWBHDF5IO, NWBFile
+from spikeinterface.core.base import unit_period_dtype
 from spikeinterface import create_sorting_analyzer, generate_ground_truth_recording, set_global_job_kwargs
 
-from ndx_spikesorting import (
-    RandomSpikes,
-    Waveforms,
-    Templates,
-    NoiseLevels,
-    UnitLocations,
-    Correlograms,
-    ISIHistograms,
-    TemplateSimilarity,
-    SpikeAmplitudes,
-    SpikeLocations,
-    AmplitudeScalings,
-    PCAProjectionsByChannel,
-    PCAProjectionsConcatenated,
-    ValidUnitPeriods,
-    SpikeSortingContainer,
-    SpikeSortingExtensions,
-)
+from ndx_spikesorting.utils import add_sorting_analyzer_to_nwbfile
 
-set_global_job_kwargs(n_jobs=16)
+set_global_job_kwargs(n_jobs=-1)
 
 # ---- Step 1: Generate mock data and create a SortingAnalyzer ----
 
 recording, sorting = generate_ground_truth_recording(
-    durations=[180.0],
+    durations=[30.0],
     num_units=5,
     num_channels=10,
     seed=42,
@@ -54,6 +36,7 @@ sorting_analyzer = create_sorting_analyzer(
     format="memory",
     sparse=True,
 )
+
 
 sorting_analyzer.compute(
     {
@@ -69,12 +52,27 @@ sorting_analyzer.compute(
         "spike_amplitudes": {},
         "amplitude_scalings": {},
         "spike_locations": {"method": "grid_convolution"},
-        "valid_unit_periods": {"minimum_valid_period_duration": 0},
     }
 )
 
-unit_ids = sorting_analyzer.unit_ids
-sparsity = sorting_analyzer.sparsity
+# Create user-defined valid periods for each unit
+# Each unit gets two disjoint valid periods
+num_units = len(sorting.unit_ids)
+sampling_frequency = recording.sampling_frequency
+user_defined_periods = np.array([], dtype=unit_period_dtype)
+for unit_index in range(num_units):
+    # First valid period: 2s–10s
+    user_defined_periods = np.append(user_defined_periods, np.array([(0, int(2.0 * sampling_frequency), int(10.0 * sampling_frequency), unit_index)], dtype=unit_period_dtype))
+    # Second valid period: 15s–25s
+    user_defined_periods = np.append(user_defined_periods, np.array([(0, int(15.0 * sampling_frequency), int(25.0 * sampling_frequency), unit_index)], dtype=unit_period_dtype))
+
+sorting_analyzer.compute(
+    "valid_unit_periods",
+    method="user_defined",
+    user_defined_periods=user_defined_periods,
+    minimum_valid_period_duration=0,
+)
+
 # ---- Step 2: Create the base NWB file with recording and sorting via neuroconv ----
 
 nwbfile = NWBFile(
@@ -89,436 +87,11 @@ nwbfile = NWBFile(
 add_recording_to_nwbfile(recording, nwbfile=nwbfile, write_as="raw", iterator_type=None)
 add_sorting_to_nwbfile(sorting, nwbfile=nwbfile, write_as="units")
 
-electrical_series = nwbfile.acquisition["ElectricalSeriesRaw"]
+# ---- Step 3: Add sorting analyzer extensions to NWB ----
 
-electrodes_region = nwbfile.create_electrode_table_region(
-    region=list(range(recording.get_num_channels())),
-    description="All electrodes used in sorting analysis",
-)
+add_sorting_analyzer_to_nwbfile(sorting_analyzer=sorting_analyzer, nwbfile=nwbfile)
 
-units_region = DynamicTableRegion(
-    name="units_region",
-    data=list(range(len(sorting.unit_ids))),
-    description="All units from sorting analysis",
-    table=nwbfile.units,
-)
-
-# ---- Step 3: Convert extensions to NWB ----
-
-# Random spikes
-random_spikes_ext = sorting_analyzer.get_extension("random_spikes")
-random_spikes_data = random_spikes_ext.get_random_spikes()
-
-all_indices = []
-cumulative_index = []
-
-for unit_id in unit_ids:
-    spike_train = sorting.get_unit_spike_train(unit_id=unit_id)
-
-    unit_mask = random_spikes_data["unit_index"] == list(unit_ids).index(unit_id)
-    unit_spike_indices = random_spikes_data["sample_index"][unit_mask]
-
-    unit_indices = []
-    for sample_index in unit_spike_indices:
-        matches = np.where(spike_train == sample_index)[0]
-        if len(matches) > 0:
-            unit_indices.append(matches[0])
-
-    unit_indices = np.array(unit_indices, dtype=np.int64)
-    all_indices.append(unit_indices)
-    cumulative_index.append(sum(len(indices) for indices in all_indices))
-
-random_spikes_indices = VectorData(
-    name="random_spikes_indices",
-    data=np.concatenate(all_indices).astype(np.int64),
-    description="Random spike indices for all units",
-)
-
-random_spikes_indices_index = VectorIndex(
-    name="random_spikes_indices_index",
-    data=np.array(cumulative_index, dtype=np.int64),
-    target=random_spikes_indices,
-)
-
-nwb_random_spikes = RandomSpikes(
-    name="random_spikes",
-    random_spikes_indices=random_spikes_indices,
-    random_spikes_indices_index=random_spikes_indices_index,
-)
-
-# Waveforms (double-ragged: rows grouped by spike, spikes grouped by unit)
-waveforms_ext = sorting_analyzer.get_extension("waveforms")
-templates_ext = sorting_analyzer.get_extension("templates")
-nbefore = templates_ext.nbefore
-
-all_wf_rows = []
-all_wf_electrode_indices = []
-wf_spike_cumulative = []   # data_index: cumulative row count per spike
-wf_unit_cumulative = []    # data_index_index: cumulative spike count per unit
-
-total_spikes = 0
-running_row_count = 0
-for unit_id in unit_ids:
-    # (n_spikes, n_samples, n_channels_sparse)
-    unit_waveforms = waveforms_ext.get_waveforms_one_unit(unit_id=unit_id, force_dense=False)
-    n_spikes_unit = unit_waveforms.shape[0]
-
-    if sparsity is not None:
-        channel_indices = sparsity.unit_id_to_channel_indices[unit_id]
-    else:
-        channel_indices = np.arange(unit_waveforms.shape[2])
-
-    for spike_idx in range(n_spikes_unit):
-        # (n_channels, n_samples) — one row per channel
-        spike_wf = unit_waveforms[spike_idx].T  # from (n_samples, n_channels) to (n_channels, n_samples)
-        all_wf_rows.append(spike_wf)
-        all_wf_electrode_indices.extend(channel_indices)
-        running_row_count += len(channel_indices)
-        wf_spike_cumulative.append(running_row_count)
-
-    total_spikes += n_spikes_unit
-    wf_unit_cumulative.append(total_spikes)
-
-wf_data = VectorData(
-    name="data",
-    data=np.vstack(all_wf_rows).astype(np.float32),
-    description="Waveform data (one row per channel per spike)",
-)
-
-wf_data_index = VectorIndex(
-    name="data_index",
-    data=np.array(wf_spike_cumulative, dtype=np.int64),
-    target=wf_data,
-)
-
-wf_data_index_index = VectorIndex(
-    name="data_index_index",
-    data=np.array(wf_unit_cumulative, dtype=np.int64),
-    target=wf_data_index,
-)
-
-wf_electrodes = DynamicTableRegion(
-    name="electrodes",
-    data=list(int(i) for i in all_wf_electrode_indices),
-    description="Electrode for each waveform row.",
-    table=nwbfile.electrodes,
-)
-
-nwb_waveforms = Waveforms(
-    name="waveforms",
-    peak_sample_index=int(nbefore),
-    data=wf_data,
-    data_index=wf_data_index,
-    data_index_index=wf_data_index_index,
-    electrodes=wf_electrodes,
-    random_spikes=nwb_random_spikes,
-)
-
-# Templates
-all_data = []
-all_electrode_indices = []
-cumulative_index = []
-
-for unit_id in unit_ids:
-    template = templates_ext.get_unit_template(unit_id=unit_id)  # (num_samples, num_channels)
-
-    if sparsity is not None:
-        channel_indices = sparsity.unit_id_to_channel_indices[unit_id]
-        sparse_template = template[:, channel_indices].T  # (num_active_channels, num_samples)
-    else:
-        channel_indices = np.arange(template.shape[1])
-        sparse_template = template.T  # (num_channels, num_samples)
-
-    all_data.append(sparse_template)
-    all_electrode_indices.extend(channel_indices)
-    cumulative_index.append(len(np.vstack(all_data)))
-
-data = VectorData(
-    name="data",
-    data=np.vstack(all_data).astype(np.float32),
-    description="Template waveforms",
-)
-
-data_index = VectorIndex(
-    name="data_index",
-    data=np.array(cumulative_index, dtype=np.int64),
-    target=data,
-)
-
-# Note: this DynamicTableRegion produces a harmless hdmf warning about not sharing
-# an ancestor with the electrodes table. This is expected because Templates is
-# nested deep in the container tree while the electrodes table is at the NWBFile root.
-# The reference resolves correctly once written to disk.
-template_electrodes = DynamicTableRegion(
-    name="electrodes",
-    data=list(int(i) for i in all_electrode_indices),
-    description="Electrode for each waveform row.",
-    table=nwbfile.electrodes,
-)
-
-nwb_templates = Templates(
-    name="templates",
-    peak_sample_index=int(nbefore),
-    data=data,
-    data_index=data_index,
-    electrodes=template_electrodes,
-)
-
-# NoiseLevels
-noise_levels_ext = sorting_analyzer.get_extension("noise_levels")
-noise_levels_data = noise_levels_ext.get_data()
-nwb_noise_levels = NoiseLevels(
-    name="noise_levels",
-    data=noise_levels_data,
-)
-
-# UnitLocations
-unit_locations_ext = sorting_analyzer.get_extension("unit_locations")
-unit_locations_data = unit_locations_ext.get_data()
-nwb_unit_locations = UnitLocations(
-    name="unit_locations",
-    data=unit_locations_data,
-)
-
-# Correlograms
-correlograms_ext = sorting_analyzer.get_extension("correlograms")
-ccgs, bin_edges = correlograms_ext.get_data()
-nwb_correlograms = Correlograms(
-    name="correlograms",
-    data=ccgs,
-    bin_edges=bin_edges
-)
-
-# ISIHistograms
-isi_ext = sorting_analyzer.get_extension("isi_histograms")
-isis, bin_edges = isi_ext.get_data()
-nwb_isi_histograms = ISIHistograms(
-    name="isi_histograms",
-    data=isis,
-    bin_edges=bin_edges
-)
-
-# TemplateSimilarity
-template_similarity_ext = sorting_analyzer.get_extension("template_similarity")
-similarity = template_similarity_ext.get_data()
-nwb_template_similarity = TemplateSimilarity(
-    name="template_similarity",
-    data=similarity,
-)
-
-# SpikeAmplitudes, AmplitudeScalings, SpikeLocations
-base_vector_extensions = ["spike_amplitudes", "spike_locations", "amplitude_scalings"]
-nwb_classes = {
-    "spike_amplitudes": SpikeAmplitudes,
-    "spike_locations": SpikeLocations,
-    "amplitude_scalings": AmplitudeScalings
-}
-nwb_extensions = {}
-spike_vector = sorting_analyzer.sorting.to_spike_vector()
-unit_indices = spike_vector["unit_index"]
-sort_order = np.argsort(unit_indices)
-cumulative_index = np.cumsum(np.bincount(unit_indices))
-for extension_name in base_vector_extensions:
-    extension = sorting_analyzer.get_extension(extension_name)
-    all_data = extension.get_data()[sort_order]
-
-    if all_data.dtype.names is not None:
-        all_data = np.stack([all_data[name] for name in all_data.dtype.names], axis=1)
-
-    data = VectorData(
-        name="data",
-        data=all_data,
-        description=f"{extension_name} data",
-    )
-
-    data_index = VectorIndex(
-        name="data_index",
-        data=np.array(cumulative_index, dtype=np.int64),
-        target=data,
-    )
-    nwb_extensions[extension_name] = nwb_classes[extension_name](
-        name=extension_name,
-        data=data,
-        data_index=data_index
-    )
-
-# PCA Projections (per-channel mode: double-ragged)
-pc_ext = sorting_analyzer.get_extension("principal_components")
-pc_mode = pc_ext.params.get("mode", "by_channel_local")
-
-if pc_mode in ("by_channel_local", "by_channel_global"):
-    # Per-channel mode: double-ragged array with electrodes
-    all_pc_rows = []
-    all_pc_electrode_indices = []
-    pc_spike_cumulative = []
-    pc_unit_cumulative = []
-
-    total_spikes = 0
-    running_row_count = 0
-    for unit_id in unit_ids:
-        unit_pcs = pc_ext.get_projections_one_unit(unit_id=unit_id, sparse=True)
-        if isinstance(unit_pcs, tuple):
-            unit_pcs, _ = unit_pcs
-        n_spikes_unit = unit_pcs.shape[0]
-
-        if sparsity is not None:
-            channel_indices = sparsity.unit_id_to_channel_indices[unit_id]
-        else:
-            channel_indices = np.arange(unit_pcs.shape[2])
-
-        for spike_idx in range(n_spikes_unit):
-            spike_pc = unit_pcs[spike_idx].T  # (n_components, n_channels) -> (n_channels, n_components)
-            all_pc_rows.append(spike_pc)
-            all_pc_electrode_indices.extend(channel_indices)
-            running_row_count += len(channel_indices)
-            pc_spike_cumulative.append(running_row_count)
-
-        total_spikes += n_spikes_unit
-        pc_unit_cumulative.append(total_spikes)
-
-    pc_data = VectorData(
-        name="data",
-        data=np.vstack(all_pc_rows).astype(np.float64),
-        description="PCA projection data",
-    )
-    pc_data_index = VectorIndex(
-        name="data_index",
-        data=np.array(pc_spike_cumulative, dtype=np.int64),
-        target=pc_data,
-    )
-    pc_data_index_index = VectorIndex(
-        name="data_index_index",
-        data=np.array(pc_unit_cumulative, dtype=np.int64),
-        target=pc_data_index,
-    )
-    pc_electrodes = DynamicTableRegion(
-        name="electrodes",
-        data=list(int(i) for i in all_pc_electrode_indices),
-        description="Electrode for each projection row.",
-        table=nwbfile.electrodes,
-    )
-    nwb_pca = PCAProjectionsByChannel(
-        name="pca_projections_by_channel",
-        data=pc_data,
-        data_index=pc_data_index,
-        data_index_index=pc_data_index_index,
-        electrodes=pc_electrodes,
-        waveforms=nwb_waveforms,
-    )
-else:
-    # Concatenated mode: single-ragged array without electrodes
-    all_pc_rows = []
-    pc_unit_cumulative = []
-
-    total_spikes = 0
-    for unit_id in unit_ids:
-        unit_pcs = pc_ext.get_projections_one_unit(unit_id=unit_id, sparse=True)
-        if isinstance(unit_pcs, tuple):
-            unit_pcs, _ = unit_pcs
-        n_spikes_unit = unit_pcs.shape[0]
-        all_pc_rows.append(unit_pcs)  # (n_spikes, n_components)
-        total_spikes += n_spikes_unit
-        pc_unit_cumulative.append(total_spikes)
-
-    pc_data = VectorData(
-        name="data",
-        data=np.vstack(all_pc_rows).astype(np.float64),
-        description="PCA projection data",
-    )
-    pc_data_index = VectorIndex(
-        name="data_index",
-        data=np.array(pc_unit_cumulative, dtype=np.int64),
-        target=pc_data,
-    )
-    nwb_pca = PCAProjectionsConcatenated(
-        name="pca_projections_concatenated",
-        data=pc_data,
-        data_index=pc_data_index,
-        waveforms=nwb_waveforms,
-    )
-
-# ValidUnitPeriods
-valid_periods_ext = sorting_analyzer.get_extension("valid_unit_periods")
-if valid_periods_ext is not None:
-    valid_periods_data = valid_periods_ext.get_data(outputs="numpy")
-    sampling_frequency = sorting_analyzer.sampling_frequency
-
-    start_times = []
-    stop_times = []
-    unit_indices = []
-
-    for period in valid_periods_data:
-        start_times.append(float(period["start_sample_index"]) / sampling_frequency)
-        stop_times.append(float(period["end_sample_index"]) / sampling_frequency)
-        unit_indices.append(int(period["unit_index"]))
-
-    if len(start_times) > 0:
-        vup_units_index = DynamicTableRegion(
-            name="units_index",
-            data=unit_indices,
-            description="Reference to units table for each valid period.",
-            table=nwbfile.units,
-        )
-
-        nwb_valid_unit_periods = ValidUnitPeriods(
-            name="valid_unit_periods",
-            description="Valid time periods per unit from spike sorting quality estimation.",
-            columns=[
-                VectorData(
-                    name="start_time", data=start_times, description="Start time of each valid period in seconds."
-                ),
-                VectorData(
-                    name="stop_time", data=stop_times, description="Stop time of each valid period in seconds."
-                ),
-                vup_units_index,
-            ],
-        )
-    else:
-        nwb_valid_unit_periods = None
-else:
-    nwb_valid_unit_periods = None
-
-
-# ---- Step 4: Assemble the SpikeSortingContainer and write to NWB ----
-
-sparsity_mask = sparsity.mask if sparsity is not None else None
-
-extensions = SpikeSortingExtensions(name="extensions")
-extensions.random_spikes = nwb_random_spikes
-extensions.waveforms = nwb_waveforms
-extensions.templates = nwb_templates
-extensions.noise_levels = nwb_noise_levels
-extensions.unit_locations = nwb_unit_locations
-extensions.correlograms = nwb_correlograms
-extensions.isi_histograms = nwb_isi_histograms
-extensions.template_similarity = nwb_template_similarity
-extensions.spike_amplitudes = nwb_extensions["spike_amplitudes"]
-extensions.spike_locations = nwb_extensions["spike_locations"]
-extensions.amplitude_scalings = nwb_extensions["amplitude_scalings"]
-if isinstance(nwb_pca, PCAProjectionsByChannel):
-    extensions.pca_projections_by_channel = nwb_pca
-else:
-    extensions.pca_projections_concatenated = nwb_pca
-if nwb_valid_unit_periods is not None:
-    extensions.valid_unit_periods = nwb_valid_unit_periods
-
-container = SpikeSortingContainer(
-    name="spike_sorting",
-    sampling_frequency=sorting_analyzer.sampling_frequency,
-    electrodes=electrodes_region,
-    units_region=units_region,
-    sparsity_mask=sparsity_mask,
-    source_electrical_series=electrical_series,
-)
-container.spike_sorting_extensions = extensions
-
-ecephys_module = nwbfile.create_processing_module(
-    name="ecephys",
-    description="Extracellular electrophysiology processing results",
-)
-ecephys_module.add(container)
-
-# ---- Step 6: Write to disk ----
+# ---- Step 4: Write to disk ----
 
 output_file = Path(__file__).parent / "sorting_analyzer_test.nwb"
 with NWBHDF5IO(str(output_file), mode="w") as io:

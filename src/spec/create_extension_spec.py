@@ -557,11 +557,13 @@ def main():
         doc=(
             "Valid time periods for each unit, typically computed from false positive/negative "
             "rate estimation or user-defined. Each row represents one valid period "
-            "for one unit, with start and stop times inherited from TimeIntervals."
+            "for one unit, with start and stop times inherited from TimeIntervals. "
+            "If a unit has multiple disjoint valid periods, each period is stored as a "
+            "separate row referencing the same unit."
         ),
         datasets=[
             NWBDatasetSpec(
-                name="units_index",
+                name="unit",
                 neurodata_type_inc="DynamicTableRegion",
                 doc=(
                     "Reference to the units table for each row, identifying which unit "
