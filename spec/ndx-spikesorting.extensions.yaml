@@ -1,3 +1,17 @@
+datasets:
+- neurodata_type_def: FiringRate
+  neurodata_type_inc: VectorData
+  dtype: float
+  doc: Mean firing rate of the unit. When obs_intervals is populated on the 
+    units table, the rate is computed over the union of the unit's valid windows
+    (n_spikes_in_valid_windows / sum(valid_durations)). When obs_intervals is 
+    absent or empty, the rate is computed over the whole recording duration. 
+    Cell-intrinsic property; written as a column on nwbfile.units.
+  attributes:
+  - name: unit
+    dtype: text
+    value: hertz
+    doc: Unit of measurement.
 groups:
 - neurodata_type_def: RandomSpikes
   neurodata_type_inc: NWBDataInterface
@@ -360,19 +374,38 @@ groups:
   - name: waveforms
     target_type: Waveforms
     doc: Link to the Waveforms from which these projections were computed.
-- neurodata_type_def: ValidUnitPeriods
-  neurodata_type_inc: TimeIntervals
-  default_name: valid_unit_periods
-  doc: Valid time periods for each unit, typically computed from false 
-    positive/negative rate estimation or user-defined. Each row represents one 
-    valid period for one unit, with start and stop times inherited from 
-    TimeIntervals. If a unit has multiple disjoint valid periods, each period is
-    stored as a separate row referencing the same unit.
+- neurodata_type_def: MetricsRun
+  neurodata_type_inc: DynamicTable
+  default_name: metrics_run
+  doc: One analysis run's worth of per-unit run-dependent metrics. Each row is 
+    one unit; columns are run-dependent metric values stored as plain VectorData
+    (no canonical types committed in v1). Multiple MetricsRun instances coexist 
+    under SpikeSortingExtensions for multiple curation runs (default run, 
+    valid-window-restricted run, per-period drift QC runs). The instance name 
+    carries the run identity (e.g., 'quality_metrics_default', 
+    'quality_metrics_valid_windows').
   datasets:
   - name: unit
     neurodata_type_inc: DynamicTableRegion
-    doc: Reference to the units table for each row, identifying which unit each 
-      valid period belongs to.
+    doc: Reference to the row in nwbfile.units that each row of this MetricsRun 
+      describes. Makes row-to-unit alignment explicit.
+  - name: valid_intervals
+    neurodata_type_inc: VectorData
+    dtype: float
+    dims:
+    - num_intervals
+    - start|end
+    shape:
+    - null
+    - 2
+    doc: Per-unit observation intervals (start, stop) pairs in seconds, 
+      describing the time windows over which metrics in this run were computed. 
+      If absent, the metrics were computed over the whole recording.
+    quantity: '?'
+  - name: valid_intervals_index
+    neurodata_type_inc: VectorIndex
+    doc: Index into valid_intervals for each row, grouping intervals by row.
+    quantity: '?'
 - neurodata_type_def: SpikeSortingExtensions
   neurodata_type_inc: NWBDataInterface
   default_name: extensions
@@ -418,9 +451,10 @@ groups:
   - neurodata_type_inc: PCAProjectionsConcatenated
     doc: Concatenated-channels PCA projections of spikes (single-ragged).
     quantity: '?'
-  - neurodata_type_inc: ValidUnitPeriods
-    doc: Valid unit periods extension data.
-    quantity: '?'
+  - neurodata_type_inc: MetricsRun
+    doc: Run-dependent per-unit metrics, one instance per analysis run. Multiple
+      instances coexist for different curation runs.
+    quantity: '*'
 - neurodata_type_def: SpikeSortingContainer
   neurodata_type_inc: NWBDataInterface
   default_name: spike_sorting

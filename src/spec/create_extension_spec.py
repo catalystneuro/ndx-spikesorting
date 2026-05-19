@@ -26,6 +26,10 @@ def main():
         ],
     )
     ns_builder.include_namespace("core")
+    ns_builder.include_type("DynamicTable", namespace="hdmf-common")
+    ns_builder.include_type("VectorData", namespace="hdmf-common")
+    ns_builder.include_type("VectorIndex", namespace="hdmf-common")
+    ns_builder.include_type("DynamicTableRegion", namespace="hdmf-common")
 
     # RandomSpikes: stores random spike indices per unit for waveform extraction
     random_spikes = NWBGroupSpec(
@@ -549,26 +553,123 @@ def main():
         ],
     )
 
-    # ValidUnitPeriods: valid time periods for each unit using TimeIntervals
-    valid_unit_periods = NWBGroupSpec(
-        neurodata_type_def="ValidUnitPeriods",
-        neurodata_type_inc="TimeIntervals",
-        default_name="valid_unit_periods",
+    # ------------------------------------------------------------------
+    # Canonical typed VectorData column classes
+    # ------------------------------------------------------------------
+    # These are stand-alone VectorData subtypes that the writer adds to either
+    # nwbfile.units (cell-intrinsic properties) or MetricsRun instances
+    # (run-dependent properties). The split is by what the value is, not by what
+    # it is used for: cell-intrinsic values estimate biological properties and
+    # are stable across reasonable analyses; run-dependent values describe the
+    # analysis itself and vary with parameter choices.
+
+    # Cell-intrinsic: live on nwbfile.units
+
+    firing_rate = NWBDatasetSpec(
+        neurodata_type_def="FiringRate",
+        neurodata_type_inc="VectorData",
+        dtype="float",
         doc=(
-            "Valid time periods for each unit, typically computed from false positive/negative "
-            "rate estimation or user-defined. Each row represents one valid period "
-            "for one unit, with start and stop times inherited from TimeIntervals. "
-            "If a unit has multiple disjoint valid periods, each period is stored as a "
-            "separate row referencing the same unit."
+            "Mean firing rate of the unit. When obs_intervals is populated on the "
+            "units table, the rate is computed over the union of the unit's valid "
+            "windows (n_spikes_in_valid_windows / sum(valid_durations)). When "
+            "obs_intervals is absent or empty, the rate is computed over the whole "
+            "recording duration. Cell-intrinsic property; written as a column on "
+            "nwbfile.units."
+        ),
+        attributes=[
+            NWBAttributeSpec(
+                name="unit",
+                dtype="text",
+                value="hertz",
+                doc="Unit of measurement.",
+            ),
+        ],
+    )
+
+    # Note: PeakToTroughSeconds and TroughHalfWidthSeconds were considered as
+    # canonical cell-intrinsic typed columns but deferred to follow-up PRs.
+    # Each has cross-pipeline variability axes (peak_sign convention,
+    # upsampling factor, channel selection, "half of what" definition) that
+    # warrant their own discussion. They still round-trip as plain VectorData
+    # columns on nwbfile.units; only FiringRate gets typed-column status in
+    # v1 as the illustrative case.
+
+    # Run-dependent: live on MetricsRun instances
+
+    # Note: Snr (signal-to-noise ratio) was considered as a canonical run-dependent
+    # column but deferred. Pipelines disagree on the formula along three axes
+    # (signal_estimator, noise_estimator, channel_selection), and a single
+    # canonical definition would either favor one convention over the others or
+    # require so many attributes that the column becomes awkward. Until the field
+    # converges or a hybrid attribute design proves itself, SNR values still
+    # round-trip as an untyped float column named "snr" on MetricsRun instances.
+
+    # Note: PresenceRatio, IsiViolationsRatio, AmplitudeCutoff were considered as
+    # canonical run-dependent typed columns but deferred. Sub-agent research
+    # (see canonical_unit_columns.md in the vault) found that each requires 2-4
+    # attributes to capture cross-pipeline variability cleanly:
+    #   - PresenceRatio: bin_sizing_convention, mean_fr_ratio_thresh, analysis_window
+    #   - IsiViolationsRatio: refractory_period_ms, censored_period_ms, formula enum
+    #   - AmplitudeCutoff: num_histogram_bins, histogram_smoothing_value,
+    #     amplitudes_bins_min_ratio, method enum
+    # Until the field converges on canonical conventions or until we are
+    # confident enough in a heavier attribute design, these metrics round-trip
+    # as plain (untyped) VectorData columns inside MetricsRun instances. The
+    # column name is preserved (so SI reconstruction works) but no schema-level
+    # type tag is committed.
+
+    # Note: AmplitudeMedian was considered as a canonical cell-intrinsic typed
+    # column but deferred. Cross-pipeline values differ by factors of 2-3
+    # because of orthogonal extraction-method, central-tendency, and
+    # sign-convention disagreements (SI signed-sample-median vs Allen
+    # mean-peak-to-peak vs IBL geometric-median-in-dB). Round-trips as a plain
+    # VectorData column on nwbfile.units.
+
+    # ------------------------------------------------------------------
+    # MetricsRun: multi-instance container for run-dependent metrics
+    # ------------------------------------------------------------------
+    metrics_run = NWBGroupSpec(
+        neurodata_type_def="MetricsRun",
+        neurodata_type_inc="DynamicTable",
+        default_name="metrics_run",
+        doc=(
+            "One analysis run's worth of per-unit run-dependent metrics. Each row "
+            "is one unit; columns are run-dependent metric values stored as "
+            "plain VectorData (no canonical types committed in v1). "
+            "Multiple MetricsRun instances coexist under SpikeSortingExtensions for "
+            "multiple curation runs (default run, valid-window-restricted run, "
+            "per-period drift QC runs). The instance name carries the run identity "
+            "(e.g., 'quality_metrics_default', 'quality_metrics_valid_windows')."
         ),
         datasets=[
             NWBDatasetSpec(
                 name="unit",
                 neurodata_type_inc="DynamicTableRegion",
                 doc=(
-                    "Reference to the units table for each row, identifying which unit "
-                    "each valid period belongs to."
+                    "Reference to the row in nwbfile.units that each row of this "
+                    "MetricsRun describes. Makes row-to-unit alignment explicit."
                 ),
+            ),
+            NWBDatasetSpec(
+                name="valid_intervals",
+                neurodata_type_inc="VectorData",
+                dtype="float",
+                dims=["num_intervals", "start|end"],
+                shape=[None, 2],
+                quantity="?",
+                doc=(
+                    "Per-unit observation intervals (start, stop) pairs in seconds, "
+                    "describing the time windows over which metrics in this run were "
+                    "computed. If absent, the metrics were computed over the whole "
+                    "recording."
+                ),
+            ),
+            NWBDatasetSpec(
+                name="valid_intervals_index",
+                neurodata_type_inc="VectorIndex",
+                quantity="?",
+                doc="Index into valid_intervals for each row, grouping intervals by row.",
             ),
         ],
     )
@@ -649,9 +750,12 @@ def main():
                 doc="Concatenated-channels PCA projections of spikes (single-ragged).",
             ),
             NWBGroupSpec(
-                neurodata_type_inc="ValidUnitPeriods",
-                quantity="?",
-                doc="Valid unit periods extension data.",
+                neurodata_type_inc="MetricsRun",
+                quantity="*",
+                doc=(
+                    "Run-dependent per-unit metrics, one instance per analysis run. "
+                    "Multiple instances coexist for different curation runs."
+                ),
             ),
         ],
     )
@@ -736,7 +840,15 @@ def main():
         amplitude_scalings,
         pca_projections_by_channel,
         pca_projections_concatenated,
-        valid_unit_periods,
+        # Canonical typed VectorData columns (cell-intrinsic, live on nwbfile.units)
+        firing_rate,
+        # No canonical typed VectorData columns are committed for the
+        # run-dependent side in v1. Run-dependent metrics still flow into
+        # MetricsRun instances as plain VectorData columns; the field has
+        # not converged on canonical conventions yet (see vault note
+        # canonical_unit_columns.md). Add typed columns here in v2.
+        # Multi-instance container for run-dependent metrics
+        metrics_run,
         spike_sorting_extensions,
         spike_sorting_container,
     ]

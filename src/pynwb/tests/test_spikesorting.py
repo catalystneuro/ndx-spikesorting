@@ -23,7 +23,7 @@ from ndx_spikesorting import (
     SpikeLocations,
     PCAProjectionsByChannel,
     PCAProjectionsConcatenated,
-    ValidUnitPeriods,
+    MetricsRun,
     SpikeSortingExtensions,
     SpikeSortingContainer,
 )
@@ -1368,76 +1368,134 @@ class TestAmplitudeScalingsRoundtrip(TestCase):
             )
 
 
-def create_mock_valid_unit_periods(nwbfile: NWBFile, num_units: int = 3, periods_per_unit: int = 2):
-    """Create mock ValidUnitPeriods with time intervals for each unit."""
-    start_times = []
-    stop_times = []
-    unit_indices = []
+def create_mock_metrics_run(nwbfile: NWBFile, num_units: int = 3, with_valid_intervals: bool = True):
+    """Create a mock MetricsRun with plain (untyped) VectorData metric columns.
 
-    for unit_idx in range(num_units):
-        for p in range(periods_per_unit):
-            start = unit_idx * 10.0 + p * 3.0
-            stop = start + 2.0
-            start_times.append(start)
-            stop_times.append(stop)
-            unit_indices.append(unit_idx)
-
-    units = DynamicTableRegion(
+    In v1 no run-dependent metric is canonized as a typed column type (each
+    candidate needs multiple attributes to capture cross-pipeline variability;
+    see canonical_unit_columns.md in the vault). Columns are stored as plain
+    VectorData with their SI metric names preserved. Optionally adds a ragged
+    valid_intervals column with two windows per unit.
+    """
+    unit_column = DynamicTableRegion(
         name="unit",
-        data=unit_indices,
-        description="Reference to units table for each valid period.",
+        data=list(range(num_units)),
+        description="Reference to nwbfile.units row this metric value applies to.",
         table=nwbfile.units,
     )
 
-    valid_unit_periods = ValidUnitPeriods(
-        name="valid_unit_periods",
-        description="Valid periods for each unit.",
-        columns=[
-            VectorData(name="start_time", data=start_times, description="Start time of each valid period."),
-            VectorData(name="stop_time", data=stop_times, description="Stop time of each valid period."),
-            units,
-        ],
+    presence_data = np.random.rand(num_units)
+    isi_data = np.random.rand(num_units) * 0.1
+    cutoff_data = np.random.rand(num_units) * 0.2
+
+    columns = [
+        unit_column,
+        VectorData(
+            name="presence_ratio",
+            description="Fraction of bins in which the unit fired (plain column; not canonized).",
+            data=presence_data,
+        ),
+        VectorData(
+            name="isi_violations_ratio",
+            description="Fraction of ISIs below the refractory threshold (plain column; not canonized).",
+            data=isi_data,
+        ),
+        VectorData(
+            name="amplitude_cutoff",
+            description="Estimated fraction of spikes missed (plain column; not canonized).",
+            data=cutoff_data,
+        ),
+    ]
+
+    if with_valid_intervals:
+        # Two disjoint windows per unit
+        flat = []
+        cumulative = []
+        running = 0
+        for unit_idx in range(num_units):
+            flat.append([unit_idx * 10.0, unit_idx * 10.0 + 2.0])
+            flat.append([unit_idx * 10.0 + 3.0, unit_idx * 10.0 + 4.5])
+            running += 2
+            cumulative.append(running)
+
+        valid_intervals_vd = VectorData(
+            name="valid_intervals",
+            data=np.array(flat, dtype=np.float64),
+            description="Per-unit observation intervals (start, stop) in seconds.",
+        )
+        valid_intervals_idx = VectorIndex(
+            name="valid_intervals_index",
+            data=np.array(cumulative, dtype=np.int64),
+            target=valid_intervals_vd,
+        )
+        columns.append(valid_intervals_vd)
+        columns.append(valid_intervals_idx)
+
+    return MetricsRun(
+        name="quality_metrics",
+        description="Run-dependent per-unit metrics from one analysis run.",
+        columns=columns,
     )
-    return valid_unit_periods
 
 
-class TestValidUnitPeriodsConstructor(TestCase):
-    """Unit tests for ValidUnitPeriods constructor."""
+class TestMetricsRunConstructor(TestCase):
+    """Unit tests for MetricsRun constructor."""
 
-    def test_constructor(self):
-        """Test that ValidUnitPeriods constructor sets values correctly."""
+    def test_constructor_without_intervals(self):
+        """MetricsRun is constructed with typed metric columns."""
         nwbfile = set_up_nwbfile()
-        valid_periods = create_mock_valid_unit_periods(nwbfile)
+        run = create_mock_metrics_run(nwbfile, with_valid_intervals=False)
 
-        self.assertEqual(valid_periods.name, "valid_unit_periods")
-        # 3 units * 2 periods each = 6 rows
-        self.assertEqual(len(valid_periods["start_time"].data), 6)
-        self.assertEqual(len(valid_periods["stop_time"].data), 6)
-        self.assertEqual(len(valid_periods["unit"].data), 6)
+        self.assertEqual(run.name, "quality_metrics")
+        self.assertIn("presence_ratio", run.colnames)
+        self.assertIn("isi_violations_ratio", run.colnames)
+        self.assertIn("unit", run.colnames)
+        self.assertNotIn("valid_intervals", run.colnames)
+        # 3 units => 3 rows
+        self.assertEqual(len(run["presence_ratio"].data), 3)
+
+    def test_constructor_with_intervals(self):
+        """MetricsRun carries valid_intervals as a ragged column."""
+        nwbfile = set_up_nwbfile()
+        run = create_mock_metrics_run(nwbfile, with_valid_intervals=True)
+
+        self.assertIn("valid_intervals", run.colnames)
+        # 3 units * 2 windows => 6 intervals in the flat data
+        self.assertEqual(run["valid_intervals"].target.data.shape, (6, 2))
+
+    def test_plain_column_values(self):
+        """MetricsRun stores run-dependent metrics as plain VectorData (v1)."""
+        nwbfile = set_up_nwbfile()
+        run = create_mock_metrics_run(nwbfile, with_valid_intervals=False)
+
+        # No typed-column attributes in v1; columns are plain VectorData.
+        self.assertEqual(len(run["presence_ratio"].data), 3)
+        self.assertEqual(len(run["isi_violations_ratio"].data), 3)
+        self.assertEqual(len(run["amplitude_cutoff"].data), 3)
 
 
-class TestValidUnitPeriodsRoundtrip(TestCase):
-    """Roundtrip test for ValidUnitPeriods."""
+class TestMetricsRunRoundtrip(TestCase):
+    """Roundtrip test for MetricsRun."""
 
     def setUp(self):
         self.nwbfile = set_up_nwbfile()
-        self.path = "test_valid_unit_periods.nwb"
+        self.path = "test_metrics_run.nwb"
 
     def tearDown(self):
         remove_test_file(self.path)
 
     def test_roundtrip(self):
-        """Test writing and reading ValidUnitPeriods."""
+        """Test writing and reading a MetricsRun instance."""
         electrodes_region = self.nwbfile.create_electrode_table_region(
             region=list(range(10)),
             description="all electrodes",
         )
         units_region = create_units_region(self.nwbfile)
 
-        valid_periods = create_mock_valid_unit_periods(self.nwbfile)
+        run = create_mock_metrics_run(self.nwbfile, with_valid_intervals=True)
 
         extensions = SpikeSortingExtensions(name="extensions")
-        extensions.valid_unit_periods = valid_periods
+        extensions.add_metrics_runs(run)
 
         container = SpikeSortingContainer(
             name="spike_sorting",
@@ -1460,19 +1518,18 @@ class TestValidUnitPeriodsRoundtrip(TestCase):
             read_nwbfile = io.read()
             read_container = read_nwbfile.processing["ecephys"]["spike_sorting"]
             read_extensions = read_container.spike_sorting_extensions
-            read_valid_periods = read_extensions.valid_unit_periods
+            read_run = read_extensions.metrics_runs["quality_metrics"]
 
             np.testing.assert_array_almost_equal(
-                read_valid_periods["start_time"][:],
-                valid_periods["start_time"].data,
+                read_run["presence_ratio"][:], run["presence_ratio"].data
             )
             np.testing.assert_array_almost_equal(
-                read_valid_periods["stop_time"][:],
-                valid_periods["stop_time"].data,
+                read_run["isi_violations_ratio"][:], run["isi_violations_ratio"].data
             )
+            # valid_intervals round-trip: VectorIndex view gives cumulative, target gives flat data
             np.testing.assert_array_equal(
-                read_valid_periods["unit"].data[:],
-                valid_periods["unit"].data,
+                read_run["valid_intervals"].target.data[:],
+                run["valid_intervals"].target.data,
             )
 
 
@@ -1763,6 +1820,9 @@ def _create_sorting_analyzer(compute_all: bool = True):
                 "spike_amplitudes": {},
                 "amplitude_scalings": {},
                 "spike_locations": {"method": "grid_convolution"},
+                "quality_metrics": {},
+                "template_metrics": {},
+                "spiketrain_metrics": {},
             }
         )
     return sorting_analyzer, recording, sorting
@@ -1912,13 +1972,22 @@ class TestReadSortingAnalyzerFromNwb(TestCase):
         remove_test_file(self.path)
 
     def test_loads_all_extensions(self):
-        """All 12 extensions are restored from the NWB file."""
+        """Extensions restored from the NWB file.
+
+        v1 canonizes one typed column (FiringRate) on Units and writes
+        quality_metrics to MetricsRun as plain VectorData. template_metrics
+        columns are not yet typed and are not currently round-tripped;
+        follow-up PRs will canonize the remaining cell-intrinsic columns
+        (peak_to_trough_duration, trough_half_width) and re-enable template
+        metrics round-trip.
+        """
         sa = self.read_fn(self.path)
         expected = {
             "random_spikes", "waveforms", "templates", "noise_levels",
             "unit_locations", "correlograms", "isi_histograms",
             "template_similarity", "spike_amplitudes", "amplitude_scalings",
             "spike_locations", "principal_components",
+            "quality_metrics", "spiketrain_metrics",
         }
         self.assertEqual(set(sa.extensions.keys()), expected)
 
@@ -2001,3 +2070,49 @@ class TestReadSortingAnalyzerFromNwb(TestCase):
         sa = self.read_fn(self.path, container_path="ecephys/spike_sorting")
         self.assertIsNotNone(sa)
         self.assertIn("templates", sa.extensions)
+
+    def test_cell_intrinsic_metrics_on_units(self):
+        """Cell-intrinsic metric columns land on nwbfile.units with type tags."""
+        from pynwb import NWBHDF5IO
+        from ndx_spikesorting import FiringRate
+
+        with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
+            nwbfile = io.read()
+            self.assertIsNotNone(nwbfile.units)
+            # FiringRate is the only canonical typed column in v1.
+            typed_columns = {
+                col_name: type(nwbfile.units[col_name]).__name__
+                for col_name in nwbfile.units.colnames
+                if isinstance(nwbfile.units[col_name], FiringRate)
+            }
+            self.assertGreater(len(typed_columns), 0)
+
+    def test_metrics_run_present(self):
+        """Run-dependent metrics land in a MetricsRun instance inside extensions."""
+        from pynwb import NWBHDF5IO
+
+        with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
+            nwbfile = io.read()
+            ext = nwbfile.processing["ecephys"]["spike_sorting"].spike_sorting_extensions
+            self.assertIn("quality_metrics", ext.metrics_runs)
+
+    def test_metric_values_roundtrip(self):
+        """Reconstructed SI metric extensions hold the same values."""
+        sa = self.read_fn(self.path)
+
+        original_st = self.sorting_analyzer.get_extension("spiketrain_metrics").get_data()
+        restored_st = sa.get_extension("spiketrain_metrics").get_data()
+        np.testing.assert_array_almost_equal(
+            restored_st["firing_rate"].to_numpy(),
+            original_st["firing_rate"].to_numpy(),
+        )
+
+        original_qm = self.sorting_analyzer.get_extension("quality_metrics").get_data()
+        restored_qm = sa.get_extension("quality_metrics").get_data()
+        for col in ("presence_ratio", "isi_violations_ratio"):
+            # NaN-safe comparison.
+            np.testing.assert_allclose(
+                restored_qm[col].to_numpy(),
+                original_qm[col].to_numpy(),
+                equal_nan=True,
+            )

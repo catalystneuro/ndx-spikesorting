@@ -27,7 +27,21 @@ SpikeLocations = get_class("SpikeLocations", "ndx-spikesorting")
 AmplitudeScalings = get_class("AmplitudeScalings", "ndx-spikesorting")
 PCAProjectionsByChannel = get_class("PCAProjectionsByChannel", "ndx-spikesorting")
 PCAProjectionsConcatenated = get_class("PCAProjectionsConcatenated", "ndx-spikesorting")
-ValidUnitPeriods = get_class("ValidUnitPeriods", "ndx-spikesorting")
+
+# Canonical typed VectorData columns (cell-intrinsic, live on nwbfile.units)
+# v1 commits one illustrative column. The other candidates (PeakToTrough,
+# TroughHalfWidth, AmplitudeMedian) and the run-dependent set defer to
+# follow-up PRs, one per metric, where their cross-pipeline variability
+# can be discussed without coupling to the structural change.
+FiringRate = get_class("FiringRate", "ndx-spikesorting")
+
+# No canonical typed VectorData columns are committed for the run-dependent
+# side in v1. Run-dependent metrics flow into MetricsRun instances as plain
+# VectorData columns. See the vault note canonical_unit_columns.md for the
+# cross-pipeline variability analysis that led to deferring these.
+
+# Multi-instance container for run-dependent metrics
+MetricsRun = get_class("MetricsRun", "ndx-spikesorting")
 
 SpikeSortingExtensions = get_class("SpikeSortingExtensions", "ndx-spikesorting")
 SpikeSortingContainer = get_class("SpikeSortingContainer", "ndx-spikesorting")
@@ -48,7 +62,8 @@ __all__ = [
     "AmplitudeScalings",
     "PCAProjectionsByChannel",
     "PCAProjectionsConcatenated",
-    "ValidUnitPeriods",
+    "FiringRate",
+    "MetricsRun",
     "SpikeSortingExtensions",
     "SpikeSortingContainer",
     "templates_to_dense",

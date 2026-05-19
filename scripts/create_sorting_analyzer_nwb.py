@@ -52,6 +52,16 @@ sorting_analyzer.compute(
         "spike_amplitudes": {},
         "amplitude_scalings": {},
         "spike_locations": {"method": "grid_convolution"},
+        # Metrics: SI's quality_metrics, template_metrics, spiketrain_metrics
+        # get redistributed by the writer. Cell-intrinsic metrics
+        # (firing_rate from spiketrain, peak_to_valley and half_width from
+        # template) land as canonical typed columns on nwbfile.units.
+        # Run-dependent metrics (snr, presence_ratio, isi_violations_ratio,
+        # amplitude_cutoff, amplitude_median from quality) land as canonical
+        # typed columns on a MetricsRun instance inside SpikeSortingExtensions.
+        "quality_metrics": {},
+        "template_metrics": {},
+        "spiketrain_metrics": {},
     }
 )
 
