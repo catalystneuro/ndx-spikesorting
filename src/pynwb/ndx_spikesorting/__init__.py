@@ -27,6 +27,11 @@ SpikeLocations = get_class("SpikeLocations", "ndx-spikesorting")
 AmplitudeScalings = get_class("AmplitudeScalings", "ndx-spikesorting")
 PCAProjectionsByChannel = get_class("PCAProjectionsByChannel", "ndx-spikesorting")
 PCAProjectionsConcatenated = get_class("PCAProjectionsConcatenated", "ndx-spikesorting")
+
+# Canonical typed VectorData columns for nwbfile.units (cell-intrinsic).
+FiringRate = get_class("FiringRate", "ndx-spikesorting")
+NumSpikes = get_class("NumSpikes", "ndx-spikesorting")
+
 ValidUnitPeriods = get_class("ValidUnitPeriods", "ndx-spikesorting")
 
 SpikeSortingExtensions = get_class("SpikeSortingExtensions", "ndx-spikesorting")
@@ -48,6 +53,8 @@ __all__ = [
     "AmplitudeScalings",
     "PCAProjectionsByChannel",
     "PCAProjectionsConcatenated",
+    "FiringRate",
+    "NumSpikes",
     "ValidUnitPeriods",
     "SpikeSortingExtensions",
     "SpikeSortingContainer",
