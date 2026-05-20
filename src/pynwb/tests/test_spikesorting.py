@@ -23,6 +23,7 @@ from ndx_spikesorting import (
     SpikeLocations,
     PCAProjectionsByChannel,
     PCAProjectionsConcatenated,
+    UnitMetrics,
     ValidUnitPeriods,
     SpikeSortingExtensions,
     SpikeSortingContainer,
@@ -1368,19 +1369,84 @@ class TestAmplitudeScalingsRoundtrip(TestCase):
             )
 
 
+def create_mock_unit_metrics(nwbfile: NWBFile, num_units: int = 3, with_time_support: bool = True):
+    """Create a mock UnitMetrics with plain VectorData metric columns.
+
+    Optionally adds a ragged time_support column with two windows per unit.
+    """
+    unit_column = DynamicTableRegion(
+        name="unit",
+        data=list(range(num_units)),
+        description="Reference to nwbfile.units row this metric value applies to.",
+        table=nwbfile.units,
+    )
+
+    presence_data = np.random.rand(num_units)
+    isi_data = np.random.rand(num_units) * 0.1
+    cutoff_data = np.random.rand(num_units) * 0.2
+
+    columns = [
+        unit_column,
+        VectorData(
+            name="presence_ratio",
+            description="Fraction of bins in which the unit fired.",
+            data=presence_data,
+        ),
+        VectorData(
+            name="isi_violations_ratio",
+            description="Fraction of ISIs below the refractory threshold.",
+            data=isi_data,
+        ),
+        VectorData(
+            name="amplitude_cutoff",
+            description="Estimated fraction of spikes missed.",
+            data=cutoff_data,
+        ),
+    ]
+
+    if with_time_support:
+        flat = []
+        cumulative = []
+        running = 0
+        for unit_index in range(num_units):
+            flat.append([unit_index * 10.0, unit_index * 10.0 + 2.0])
+            flat.append([unit_index * 10.0 + 3.0, unit_index * 10.0 + 4.5])
+            running += 2
+            cumulative.append(running)
+
+        time_support_vd = VectorData(
+            name="time_support",
+            data=np.array(flat, dtype=np.float64),
+            description="Per-unit time intervals (start, stop) in seconds over which metrics were computed.",
+        )
+        time_support_idx = VectorIndex(
+            name="time_support_index",
+            data=np.array(cumulative, dtype=np.int64),
+            target=time_support_vd,
+        )
+        columns.append(time_support_vd)
+        columns.append(time_support_idx)
+
+    return UnitMetrics(
+        name="quality_metrics",
+        description="Run-dependent per-unit metrics from one analysis run.",
+        columns=columns,
+    )
+
+
 def create_mock_valid_unit_periods(nwbfile: NWBFile, num_units: int = 3, periods_per_unit: int = 2):
     """Create mock ValidUnitPeriods with time intervals for each unit."""
     start_times = []
     stop_times = []
     unit_indices = []
 
-    for unit_idx in range(num_units):
+    for unit_index in range(num_units):
         for p in range(periods_per_unit):
-            start = unit_idx * 10.0 + p * 3.0
+            start = unit_index * 10.0 + p * 3.0
             stop = start + 2.0
             start_times.append(start)
             stop_times.append(stop)
-            unit_indices.append(unit_idx)
+            unit_indices.append(unit_index)
 
     units = DynamicTableRegion(
         name="unit",
@@ -1399,6 +1465,91 @@ def create_mock_valid_unit_periods(nwbfile: NWBFile, num_units: int = 3, periods
         ],
     )
     return valid_unit_periods
+
+
+class TestUnitMetricsConstructor(TestCase):
+    """Unit tests for UnitMetrics constructor."""
+
+    def test_constructor_without_intervals(self):
+        """UnitMetrics is constructed with the expected columns."""
+        nwbfile = set_up_nwbfile()
+        run = create_mock_unit_metrics(nwbfile, with_time_support=False)
+
+        self.assertEqual(run.name, "quality_metrics")
+        self.assertIn("presence_ratio", run.colnames)
+        self.assertIn("isi_violations_ratio", run.colnames)
+        self.assertIn("unit", run.colnames)
+        self.assertNotIn("time_support", run.colnames)
+        self.assertEqual(len(run["presence_ratio"].data), 3)
+        self.assertEqual(len(run["isi_violations_ratio"].data), 3)
+        self.assertEqual(len(run["amplitude_cutoff"].data), 3)
+
+    def test_constructor_with_intervals(self):
+        """UnitMetrics carries time_support as a ragged column."""
+        nwbfile = set_up_nwbfile()
+        run = create_mock_unit_metrics(nwbfile, with_time_support=True)
+
+        self.assertIn("time_support", run.colnames)
+        # 3 units * 2 windows => 6 intervals in the flat data
+        self.assertEqual(run["time_support"].target.data.shape, (6, 2))
+
+
+class TestUnitMetricsRoundtrip(TestCase):
+    """Roundtrip test for UnitMetrics."""
+
+    def setUp(self):
+        self.nwbfile = set_up_nwbfile()
+        self.path = "test_unit_metrics.nwb"
+
+    def tearDown(self):
+        remove_test_file(self.path)
+
+    def test_roundtrip(self):
+        """Test writing and reading a UnitMetrics instance."""
+        electrodes_region = self.nwbfile.create_electrode_table_region(
+            region=list(range(10)),
+            description="all electrodes",
+        )
+        units_region = create_units_region(self.nwbfile)
+
+        run = create_mock_unit_metrics(self.nwbfile, with_time_support=True)
+
+        extensions = SpikeSortingExtensions(name="extensions")
+        extensions.add_unit_metrics(run)
+
+        container = SpikeSortingContainer(
+            name="spike_sorting",
+            sampling_frequency=30000.0,
+            electrodes=electrodes_region,
+            units_region=units_region,
+        )
+        container.spike_sorting_extensions = extensions
+
+        ecephys_module = self.nwbfile.create_processing_module(
+            name="ecephys",
+            description="Extracellular electrophysiology processing",
+        )
+        ecephys_module.add(container)
+
+        with NWBHDF5IO(self.path, mode="w") as io:
+            io.write(self.nwbfile)
+
+        with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
+            read_nwbfile = io.read()
+            read_container = read_nwbfile.processing["ecephys"]["spike_sorting"]
+            read_extensions = read_container.spike_sorting_extensions
+            read_run = read_extensions.unit_metrics["quality_metrics"]
+
+            np.testing.assert_array_almost_equal(
+                read_run["presence_ratio"][:], run["presence_ratio"].data
+            )
+            np.testing.assert_array_almost_equal(
+                read_run["isi_violations_ratio"][:], run["isi_violations_ratio"].data
+            )
+            np.testing.assert_array_equal(
+                read_run["time_support"].target.data[:],
+                run["time_support"].target.data,
+            )
 
 
 class TestValidUnitPeriodsConstructor(TestCase):
@@ -1763,6 +1914,9 @@ def _create_sorting_analyzer(compute_all: bool = True):
                 "spike_amplitudes": {},
                 "amplitude_scalings": {},
                 "spike_locations": {"method": "grid_convolution"},
+                "quality_metrics": {},
+                "template_metrics": {},
+                "spiketrain_metrics": {},
             }
         )
     return sorting_analyzer, recording, sorting
@@ -1912,13 +2066,22 @@ class TestReadSortingAnalyzerFromNwb(TestCase):
         remove_test_file(self.path)
 
     def test_loads_all_extensions(self):
-        """All 12 extensions are restored from the NWB file."""
+        """Extensions restored from the NWB file.
+
+        Quality, template, and spiketrain metric columns all live on a
+        single UnitMetrics table on disk; the reader uses
+        ``COLUMN_TO_EXTENSION`` to split them back into the right SI
+        extensions on read. ``FiringRate`` is the only canonized typed
+        column on Units in v1 (additional canonical columns are in
+        follow-up PRs); it routes to ``spiketrain_metrics``.
+        """
         sa = self.read_fn(self.path)
         expected = {
             "random_spikes", "waveforms", "templates", "noise_levels",
             "unit_locations", "correlograms", "isi_histograms",
             "template_similarity", "spike_amplitudes", "amplitude_scalings",
             "spike_locations", "principal_components",
+            "quality_metrics", "template_metrics", "spiketrain_metrics",
         }
         self.assertEqual(set(sa.extensions.keys()), expected)
 
@@ -2001,3 +2164,114 @@ class TestReadSortingAnalyzerFromNwb(TestCase):
         sa = self.read_fn(self.path, container_path="ecephys/spike_sorting")
         self.assertIsNotNone(sa)
         self.assertIn("templates", sa.extensions)
+
+    def test_cell_intrinsic_metrics_on_units(self):
+        """Cell-intrinsic metric columns land on nwbfile.units with type tags."""
+        from pynwb import NWBHDF5IO
+        from ndx_spikesorting import FiringRate
+
+        with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
+            nwbfile = io.read()
+            self.assertIsNotNone(nwbfile.units)
+            # FiringRate is the only canonical typed column in v1.
+            typed_columns = {
+                col_name: type(nwbfile.units[col_name]).__name__
+                for col_name in nwbfile.units.colnames
+                if isinstance(nwbfile.units[col_name], FiringRate)
+            }
+            self.assertGreater(len(typed_columns), 0)
+
+    def test_unit_metrics_present(self):
+        """Run-dependent metrics land in a UnitMetrics instance inside extensions."""
+        from pynwb import NWBHDF5IO
+
+        with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
+            nwbfile = io.read()
+            ext = nwbfile.processing["ecephys"]["spike_sorting"].spike_sorting_extensions
+            self.assertIn("quality_metrics", ext.unit_metrics)
+
+    def test_metric_values_roundtrip(self):
+        """Reconstructed SI metric extensions hold the same values."""
+        sa = self.read_fn(self.path)
+
+        original_st = self.sorting_analyzer.get_extension("spiketrain_metrics").get_data()
+        restored_st = sa.get_extension("spiketrain_metrics").get_data()
+        np.testing.assert_array_almost_equal(
+            restored_st["firing_rate"].to_numpy(),
+            original_st["firing_rate"].to_numpy(),
+        )
+
+        original_qm = self.sorting_analyzer.get_extension("quality_metrics").get_data()
+        restored_qm = sa.get_extension("quality_metrics").get_data()
+        for col in ("presence_ratio", "isi_violations_ratio"):
+            # NaN-safe comparison.
+            np.testing.assert_allclose(
+                restored_qm[col].to_numpy(),
+                original_qm[col].to_numpy(),
+                equal_nan=True,
+            )
+
+    def test_template_metrics_roundtrip(self):
+        """template_metrics columns split out of UnitMetrics into the right SI extension."""
+        sa = self.read_fn(self.path)
+
+        original_tm = self.sorting_analyzer.get_extension("template_metrics").get_data()
+        restored_tm = sa.get_extension("template_metrics").get_data()
+        # Sanity check: the SI extension is restored, not merged into quality_metrics.
+        self.assertIsNotNone(restored_tm)
+        # Every template-metric column from the original is present and equal.
+        for col in original_tm.columns:
+            self.assertIn(col, restored_tm.columns, f"template_metrics missing {col!r}")
+            np.testing.assert_allclose(
+                restored_tm[col].to_numpy(),
+                original_tm[col].to_numpy(),
+                equal_nan=True,
+            )
+
+    def test_quality_and_template_metrics_separated_on_read(self):
+        """quality_metrics and template_metrics extensions hold disjoint columns post-read.
+
+        Pre-fix, every column on UnitMetrics was funneled into quality_metrics,
+        which made template_metrics empty (or absent) and put template columns
+        like ``peak_to_trough_duration`` under quality_metrics.
+        """
+        sa = self.read_fn(self.path)
+
+        qm_cols = set(sa.get_extension("quality_metrics").get_data().columns)
+        tm_cols = set(sa.get_extension("template_metrics").get_data().columns)
+
+        # template_metrics columns should NOT be in quality_metrics.
+        leaked = {"peak_to_trough_duration", "trough_half_width", "peak_half_width"} & qm_cols
+        self.assertEqual(leaked, set(), f"template columns leaked into quality_metrics: {leaked}")
+
+        # quality_metrics columns should NOT be in template_metrics.
+        leaked = {"presence_ratio", "isi_violations_ratio"} & tm_cols
+        self.assertEqual(leaked, set(), f"quality columns leaked into template_metrics: {leaked}")
+
+    def test_column_to_extension_covers_all_computed_columns(self):
+        """COLUMN_TO_EXTENSION covers every column produced by the SI extensions
+        we compute in the fixture.
+
+        Acts as a guard: if SI adds a new column in a release, the test fails
+        with a clear message naming the uncovered column. Update
+        ``COLUMN_TO_EXTENSION`` in ``utils.py`` to silence.
+        """
+        from ndx_spikesorting.utils import COLUMN_TO_EXTENSION
+
+        uncovered = []
+        for ext_name in ("template_metrics", "quality_metrics", "spiketrain_metrics"):
+            ext = self.sorting_analyzer.get_extension(ext_name)
+            if ext is None:
+                continue
+            df_cols = ext.get_data().columns
+            for col in df_cols:
+                if col not in COLUMN_TO_EXTENSION:
+                    uncovered.append((ext_name, col))
+
+        self.assertEqual(
+            uncovered,
+            [],
+            "Columns produced by SpikeInterface (SI) but missing from "
+            f"COLUMN_TO_EXTENSION: {uncovered}. Add them to the dict in "
+            "src/pynwb/ndx_spikesorting/utils.py.",
+        )

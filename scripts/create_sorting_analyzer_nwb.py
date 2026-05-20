@@ -52,6 +52,9 @@ sorting_analyzer.compute(
         "spike_amplitudes": {},
         "amplitude_scalings": {},
         "spike_locations": {"method": "grid_convolution"},
+        "quality_metrics": {},
+        "template_metrics": {},
+        "spiketrain_metrics": {},
     }
 )
 

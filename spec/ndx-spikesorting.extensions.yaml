@@ -1,3 +1,15 @@
+datasets:
+- neurodata_type_def: FiringRate
+  neurodata_type_inc: VectorData
+  dtype: float
+  doc: Mean firing rate of the unit, computed as the number of spikes divided by
+    the recording duration. Cell-intrinsic property; written as a column on 
+    nwbfile.units.
+  attributes:
+  - name: unit
+    dtype: text
+    value: hertz
+    doc: Unit of measurement.
 groups:
 - neurodata_type_def: RandomSpikes
   neurodata_type_inc: NWBDataInterface
@@ -360,6 +372,38 @@ groups:
   - name: waveforms
     target_type: Waveforms
     doc: Link to the Waveforms from which these projections were computed.
+- neurodata_type_def: UnitMetrics
+  neurodata_type_inc: DynamicTable
+  default_name: unit_metrics
+  doc: Per-unit metric values from one analysis run. Each row is one unit; 
+    columns are metric values. The required `unit` DynamicTableRegion references
+    the corresponding row in nwbfile.units. Multiple instances coexist under 
+    SpikeSortingExtensions for different analysis runs.
+  datasets:
+  - name: unit
+    neurodata_type_inc: DynamicTableRegion
+    doc: Reference to the row in nwbfile.units that each row of this UnitMetrics
+      describes.
+  - name: time_support
+    neurodata_type_inc: VectorData
+    dtype: float
+    dims:
+    - num_intervals
+    - start_end
+    shape:
+    - null
+    - 2
+    doc: Per-unit time intervals (start, stop) in seconds over which this row's 
+      metric values were computed. Each row's metric values reflect only events 
+      that fell within these per-unit windows. Ragged by row via 
+      time_support_index. Distinct from `Units.obs_intervals` (NWB-core), which 
+      constrains the validity of `spike_times` on the Units table; this column 
+      records the analysis-time windows used as input to this row's computation.
+    quantity: '?'
+  - name: time_support_index
+    neurodata_type_inc: VectorIndex
+    doc: Index column for the ragged time_support column.
+    quantity: '?'
 - neurodata_type_def: ValidUnitPeriods
   neurodata_type_inc: TimeIntervals
   default_name: valid_unit_periods
@@ -418,6 +462,10 @@ groups:
   - neurodata_type_inc: PCAProjectionsConcatenated
     doc: Concatenated-channels PCA projections of spikes (single-ragged).
     quantity: '?'
+  - neurodata_type_inc: UnitMetrics
+    doc: Per-unit metrics from one analysis run. Multiple instances coexist for 
+      different runs (different parameter sets).
+    quantity: '*'
   - neurodata_type_inc: ValidUnitPeriods
     doc: Valid unit periods extension data.
     quantity: '?'

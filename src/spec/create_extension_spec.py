@@ -26,6 +26,10 @@ def main():
         ],
     )
     ns_builder.include_namespace("core")
+    ns_builder.include_type("DynamicTable", namespace="hdmf-common")
+    ns_builder.include_type("VectorData", namespace="hdmf-common")
+    ns_builder.include_type("VectorIndex", namespace="hdmf-common")
+    ns_builder.include_type("DynamicTableRegion", namespace="hdmf-common")
 
     # RandomSpikes: stores random spike indices per unit for waveform extraction
     random_spikes = NWBGroupSpec(
@@ -549,7 +553,82 @@ def main():
         ],
     )
 
-    # ValidUnitPeriods: valid time periods for each unit using TimeIntervals
+    # ------------------------------------------------------------------
+    # Canonical typed VectorData column classes
+    # ------------------------------------------------------------------
+    # These are stand-alone VectorData subtypes that the writer adds to either
+    # nwbfile.units (cell-intrinsic properties) or UnitMetrics instances
+    # (run-dependent properties). The split is by what the value is, not by what
+    # it is used for: cell-intrinsic values estimate biological properties and
+    # are stable across reasonable analyses; run-dependent values describe the
+    # analysis itself and vary with parameter choices.
+
+    # Cell-intrinsic: live on nwbfile.units
+
+    firing_rate = NWBDatasetSpec(
+        neurodata_type_def="FiringRate",
+        neurodata_type_inc="VectorData",
+        dtype="float",
+        doc=(
+            "Mean firing rate of the unit, computed as the number of spikes "
+            "divided by the recording duration. Cell-intrinsic property; "
+            "written as a column on nwbfile.units."
+        ),
+        attributes=[
+            NWBAttributeSpec(
+                name="unit",
+                dtype="text",
+                value="hertz",
+                doc="Unit of measurement.",
+            ),
+        ],
+    )
+
+    unit_metrics = NWBGroupSpec(
+        neurodata_type_def="UnitMetrics",
+        neurodata_type_inc="DynamicTable",
+        default_name="unit_metrics",
+        doc=(
+            "Per-unit metric values from one analysis run. Each row is one unit; "
+            "columns are metric values. The required `unit` DynamicTableRegion "
+            "references the corresponding row in nwbfile.units. Multiple instances "
+            "coexist under SpikeSortingExtensions for different analysis runs."
+        ),
+        datasets=[
+            NWBDatasetSpec(
+                name="unit",
+                neurodata_type_inc="DynamicTableRegion",
+                doc=(
+                    "Reference to the row in nwbfile.units that each row of this "
+                    "UnitMetrics describes."
+                ),
+            ),
+            NWBDatasetSpec(
+                name="time_support",
+                neurodata_type_inc="VectorData",
+                dtype="float",
+                dims=["num_intervals", "start_end"],
+                shape=[None, 2],
+                doc=(
+                    "Per-unit time intervals (start, stop) in seconds over which this "
+                    "row's metric values were computed. Each row's metric values reflect "
+                    "only events that fell within these per-unit windows. Ragged by row "
+                    "via time_support_index. Distinct from `Units.obs_intervals` (NWB-core), "
+                    "which constrains the validity of `spike_times` on the Units table; "
+                    "this column records the analysis-time windows used as input to this "
+                    "row's computation."
+                ),
+                quantity="?",
+            ),
+            NWBDatasetSpec(
+                name="time_support_index",
+                neurodata_type_inc="VectorIndex",
+                doc="Index column for the ragged time_support column.",
+                quantity="?",
+            ),
+        ],
+    )
+
     valid_unit_periods = NWBGroupSpec(
         neurodata_type_def="ValidUnitPeriods",
         neurodata_type_inc="TimeIntervals",
@@ -649,6 +728,14 @@ def main():
                 doc="Concatenated-channels PCA projections of spikes (single-ragged).",
             ),
             NWBGroupSpec(
+                neurodata_type_inc="UnitMetrics",
+                quantity="*",
+                doc=(
+                    "Per-unit metrics from one analysis run. Multiple instances "
+                    "coexist for different runs (different parameter sets)."
+                ),
+            ),
+            NWBGroupSpec(
                 neurodata_type_inc="ValidUnitPeriods",
                 quantity="?",
                 doc="Valid unit periods extension data.",
@@ -736,6 +823,8 @@ def main():
         amplitude_scalings,
         pca_projections_by_channel,
         pca_projections_concatenated,
+        firing_rate,
+        unit_metrics,
         valid_unit_periods,
         spike_sorting_extensions,
         spike_sorting_container,
