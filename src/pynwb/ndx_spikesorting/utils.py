@@ -368,7 +368,7 @@ def _convert_unit_metrics(
     Each row of the table references one unit (via the ``unit``
     ``DynamicTableRegion``) and carries that unit's run-dependent metric values
     as typed columns. If ``valid_unit_periods`` is also computed, the per-unit
-    valid windows are written as ``computation_intervals`` on the table.
+    valid windows are written as ``time_support`` on the table.
     Returns ``None`` when ``quality_metrics`` is not computed.
     """
     qm_ext = sorting_analyzer.get_extension("quality_metrics")
@@ -442,21 +442,21 @@ def _convert_unit_metrics(
             running += len(windows)
             cumulative.append(running)
 
-        computation_intervals_vd = VectorData(
-            name="computation_intervals",
+        time_support_vd = VectorData(
+            name="time_support",
             data=np.array(flat_intervals, dtype=np.float64) if flat_intervals else np.zeros((0, 2)),
             description=(
                 "Per-unit time intervals (start, stop) in seconds over which this row's "
                 "metric values were computed."
             ),
         )
-        computation_intervals_index = VectorIndex(
-            name="computation_intervals_index",
+        time_support_index = VectorIndex(
+            name="time_support_index",
             data=np.array(cumulative, dtype=np.int64),
-            target=computation_intervals_vd,
+            target=time_support_vd,
         )
-        columns.append(computation_intervals_vd)
-        columns.append(computation_intervals_index)
+        columns.append(time_support_vd)
+        columns.append(time_support_index)
 
     return UnitMetrics(
         name="quality_metrics",
@@ -1312,7 +1312,7 @@ def _load_unit_metrics(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
         per_extension_params: dict[str, dict] = {}
 
         for col_name in nwb_table.colnames:
-            if col_name in ("unit", "computation_intervals", "computation_intervals_index"):
+            if col_name in ("unit", "time_support", "time_support_index"):
                 continue
             col = nwb_table[col_name]
             # First try the typed-column registry (empty in v1; kept for forward

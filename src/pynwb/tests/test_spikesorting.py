@@ -1369,10 +1369,10 @@ class TestAmplitudeScalingsRoundtrip(TestCase):
             )
 
 
-def create_mock_unit_metrics(nwbfile: NWBFile, num_units: int = 3, with_computation_intervals: bool = True):
+def create_mock_unit_metrics(nwbfile: NWBFile, num_units: int = 3, with_time_support: bool = True):
     """Create a mock UnitMetrics with plain VectorData metric columns.
 
-    Optionally adds a ragged computation_intervals column with two windows per unit.
+    Optionally adds a ragged time_support column with two windows per unit.
     """
     unit_column = DynamicTableRegion(
         name="unit",
@@ -1404,7 +1404,7 @@ def create_mock_unit_metrics(nwbfile: NWBFile, num_units: int = 3, with_computat
         ),
     ]
 
-    if with_computation_intervals:
+    if with_time_support:
         flat = []
         cumulative = []
         running = 0
@@ -1414,18 +1414,18 @@ def create_mock_unit_metrics(nwbfile: NWBFile, num_units: int = 3, with_computat
             running += 2
             cumulative.append(running)
 
-        computation_intervals_vd = VectorData(
-            name="computation_intervals",
+        time_support_vd = VectorData(
+            name="time_support",
             data=np.array(flat, dtype=np.float64),
             description="Per-unit time intervals (start, stop) in seconds over which metrics were computed.",
         )
-        computation_intervals_idx = VectorIndex(
-            name="computation_intervals_index",
+        time_support_idx = VectorIndex(
+            name="time_support_index",
             data=np.array(cumulative, dtype=np.int64),
-            target=computation_intervals_vd,
+            target=time_support_vd,
         )
-        columns.append(computation_intervals_vd)
-        columns.append(computation_intervals_idx)
+        columns.append(time_support_vd)
+        columns.append(time_support_idx)
 
     return UnitMetrics(
         name="quality_metrics",
@@ -1473,25 +1473,25 @@ class TestUnitMetricsConstructor(TestCase):
     def test_constructor_without_intervals(self):
         """UnitMetrics is constructed with the expected columns."""
         nwbfile = set_up_nwbfile()
-        run = create_mock_unit_metrics(nwbfile, with_computation_intervals=False)
+        run = create_mock_unit_metrics(nwbfile, with_time_support=False)
 
         self.assertEqual(run.name, "quality_metrics")
         self.assertIn("presence_ratio", run.colnames)
         self.assertIn("isi_violations_ratio", run.colnames)
         self.assertIn("unit", run.colnames)
-        self.assertNotIn("computation_intervals", run.colnames)
+        self.assertNotIn("time_support", run.colnames)
         self.assertEqual(len(run["presence_ratio"].data), 3)
         self.assertEqual(len(run["isi_violations_ratio"].data), 3)
         self.assertEqual(len(run["amplitude_cutoff"].data), 3)
 
     def test_constructor_with_intervals(self):
-        """UnitMetrics carries computation_intervals as a ragged column."""
+        """UnitMetrics carries time_support as a ragged column."""
         nwbfile = set_up_nwbfile()
-        run = create_mock_unit_metrics(nwbfile, with_computation_intervals=True)
+        run = create_mock_unit_metrics(nwbfile, with_time_support=True)
 
-        self.assertIn("computation_intervals", run.colnames)
+        self.assertIn("time_support", run.colnames)
         # 3 units * 2 windows => 6 intervals in the flat data
-        self.assertEqual(run["computation_intervals"].target.data.shape, (6, 2))
+        self.assertEqual(run["time_support"].target.data.shape, (6, 2))
 
 
 class TestUnitMetricsRoundtrip(TestCase):
@@ -1512,7 +1512,7 @@ class TestUnitMetricsRoundtrip(TestCase):
         )
         units_region = create_units_region(self.nwbfile)
 
-        run = create_mock_unit_metrics(self.nwbfile, with_computation_intervals=True)
+        run = create_mock_unit_metrics(self.nwbfile, with_time_support=True)
 
         extensions = SpikeSortingExtensions(name="extensions")
         extensions.add_unit_metrics(run)
@@ -1547,8 +1547,8 @@ class TestUnitMetricsRoundtrip(TestCase):
                 read_run["isi_violations_ratio"][:], run["isi_violations_ratio"].data
             )
             np.testing.assert_array_equal(
-                read_run["computation_intervals"].target.data[:],
-                run["computation_intervals"].target.data,
+                read_run["time_support"].target.data[:],
+                run["time_support"].target.data,
             )
 
 
