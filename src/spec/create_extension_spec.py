@@ -570,12 +570,9 @@ def main():
         neurodata_type_inc="VectorData",
         dtype="float",
         doc=(
-            "Mean firing rate of the unit. When obs_intervals is populated on the "
-            "units table, the rate is computed over the union of the unit's valid "
-            "windows (n_spikes_in_valid_windows / sum(valid_durations)). When "
-            "obs_intervals is absent or empty, the rate is computed over the whole "
-            "recording duration. Cell-intrinsic property; written as a column on "
-            "nwbfile.units."
+            "Mean firing rate of the unit, computed as the number of spikes "
+            "divided by the recording duration. Cell-intrinsic property; "
+            "written as a column on nwbfile.units."
         ),
         attributes=[
             NWBAttributeSpec(
@@ -587,19 +584,6 @@ def main():
         ],
     )
 
-    # Other canonical column candidates (PeakToTroughSeconds, TroughHalfWidthSeconds,
-    # AmplitudeMedian on the cell-intrinsic side; Snr, PresenceRatio,
-    # IsiViolationsRatio, AmplitudeCutoff on the run-dependent side) were considered
-    # for v1 and deferred to follow-up PRs after cross-pipeline variability research.
-    # They still round-trip as plain VectorData columns on the appropriate table
-    # (nwbfile.units or UnitMetrics instances), just without typed-column tags.
-    # Background: see `canonical_unit_columns.md` in the project vault.
-
-    # ------------------------------------------------------------------
-    # UnitMetrics: multi-instance container for per-unit metrics from one
-    # analysis run. Required `unit` DynamicTableRegion makes the row-to-unit
-    # mapping explicit. Multiple instances coexist under SpikeSortingExtensions
-    # so multiple runs (with different parameters) can be stored in one file.
     unit_metrics = NWBGroupSpec(
         neurodata_type_def="UnitMetrics",
         neurodata_type_inc="DynamicTable",
@@ -622,10 +606,6 @@ def main():
         ],
     )
 
-    # ValidUnitPeriods: valid time periods for each unit using TimeIntervals.
-    # Carried over from PR #17. A follow-up PR may migrate per-unit valid
-    # windows to NWB-core Units.obs_intervals and deprecate this type; that
-    # change is scoped separately to keep the present PR's diff small.
     valid_unit_periods = NWBGroupSpec(
         neurodata_type_def="ValidUnitPeriods",
         neurodata_type_inc="TimeIntervals",

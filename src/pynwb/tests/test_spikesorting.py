@@ -24,6 +24,7 @@ from ndx_spikesorting import (
     PCAProjectionsByChannel,
     PCAProjectionsConcatenated,
     UnitMetrics,
+    ValidUnitPeriods,
     SpikeSortingExtensions,
     SpikeSortingContainer,
 )
@@ -1368,15 +1369,8 @@ class TestAmplitudeScalingsRoundtrip(TestCase):
             )
 
 
-def create_mock_unit_metrics(nwbfile: NWBFile, num_units: int = 3, with_obs_intervals: bool = True):
-    """Create a mock UnitMetrics with plain (untyped) VectorData metric columns.
-
-    In v1 no run-dependent metric is canonized as a typed column type (each
-    candidate needs multiple attributes to capture cross-pipeline variability;
-    see canonical_unit_columns.md in the vault). Columns are stored as plain
-    VectorData with their SI metric names preserved. Optionally adds a ragged
-    obs_intervals column with two windows per unit.
-    """
+def create_mock_unit_metrics(nwbfile: NWBFile, num_units: int = 3):
+    """Create a mock UnitMetrics with plain (untyped) VectorData metric columns."""
     unit_column = DynamicTableRegion(
         name="unit",
         data=list(range(num_units)),
@@ -1392,44 +1386,20 @@ def create_mock_unit_metrics(nwbfile: NWBFile, num_units: int = 3, with_obs_inte
         unit_column,
         VectorData(
             name="presence_ratio",
-            description="Fraction of bins in which the unit fired (plain column; not canonized).",
+            description="Fraction of bins in which the unit fired.",
             data=presence_data,
         ),
         VectorData(
             name="isi_violations_ratio",
-            description="Fraction of ISIs below the refractory threshold (plain column; not canonized).",
+            description="Fraction of ISIs below the refractory threshold.",
             data=isi_data,
         ),
         VectorData(
             name="amplitude_cutoff",
-            description="Estimated fraction of spikes missed (plain column; not canonized).",
+            description="Estimated fraction of spikes missed.",
             data=cutoff_data,
         ),
     ]
-
-    if with_obs_intervals:
-        # Two disjoint windows per unit
-        flat = []
-        cumulative = []
-        running = 0
-        for unit_idx in range(num_units):
-            flat.append([unit_idx * 10.0, unit_idx * 10.0 + 2.0])
-            flat.append([unit_idx * 10.0 + 3.0, unit_idx * 10.0 + 4.5])
-            running += 2
-            cumulative.append(running)
-
-        obs_intervals_vd = VectorData(
-            name="obs_intervals",
-            data=np.array(flat, dtype=np.float64),
-            description="Per-unit observation intervals (start, stop) in seconds.",
-        )
-        obs_intervals_idx = VectorIndex(
-            name="obs_intervals_index",
-            data=np.array(cumulative, dtype=np.int64),
-            target=obs_intervals_vd,
-        )
-        columns.append(obs_intervals_vd)
-        columns.append(obs_intervals_idx)
 
     return UnitMetrics(
         name="quality_metrics",
@@ -1438,37 +1408,51 @@ def create_mock_unit_metrics(nwbfile: NWBFile, num_units: int = 3, with_obs_inte
     )
 
 
+def create_mock_valid_unit_periods(nwbfile: NWBFile, num_units: int = 3, periods_per_unit: int = 2):
+    """Create mock ValidUnitPeriods with time intervals for each unit."""
+    start_times = []
+    stop_times = []
+    unit_indices = []
+
+    for unit_index in range(num_units):
+        for p in range(periods_per_unit):
+            start = unit_index * 10.0 + p * 3.0
+            stop = start + 2.0
+            start_times.append(start)
+            stop_times.append(stop)
+            unit_indices.append(unit_index)
+
+    units = DynamicTableRegion(
+        name="unit",
+        data=unit_indices,
+        description="Reference to units table for each valid period.",
+        table=nwbfile.units,
+    )
+
+    valid_unit_periods = ValidUnitPeriods(
+        name="valid_unit_periods",
+        description="Valid periods for each unit.",
+        columns=[
+            VectorData(name="start_time", data=start_times, description="Start time of each valid period."),
+            VectorData(name="stop_time", data=stop_times, description="Stop time of each valid period."),
+            units,
+        ],
+    )
+    return valid_unit_periods
+
+
 class TestUnitMetricsConstructor(TestCase):
     """Unit tests for UnitMetrics constructor."""
 
-    def test_constructor_without_intervals(self):
-        """UnitMetrics is constructed with typed metric columns."""
+    def test_constructor(self):
+        """UnitMetrics is constructed with the expected columns."""
         nwbfile = set_up_nwbfile()
-        run = create_mock_unit_metrics(nwbfile, with_obs_intervals=False)
+        run = create_mock_unit_metrics(nwbfile)
 
         self.assertEqual(run.name, "quality_metrics")
         self.assertIn("presence_ratio", run.colnames)
         self.assertIn("isi_violations_ratio", run.colnames)
         self.assertIn("unit", run.colnames)
-        self.assertNotIn("obs_intervals", run.colnames)
-        # 3 units => 3 rows
-        self.assertEqual(len(run["presence_ratio"].data), 3)
-
-    def test_constructor_with_intervals(self):
-        """UnitMetrics carries obs_intervals as a ragged column."""
-        nwbfile = set_up_nwbfile()
-        run = create_mock_unit_metrics(nwbfile, with_obs_intervals=True)
-
-        self.assertIn("obs_intervals", run.colnames)
-        # 3 units * 2 windows => 6 intervals in the flat data
-        self.assertEqual(run["obs_intervals"].target.data.shape, (6, 2))
-
-    def test_plain_column_values(self):
-        """UnitMetrics stores run-dependent metrics as plain VectorData (v1)."""
-        nwbfile = set_up_nwbfile()
-        run = create_mock_unit_metrics(nwbfile, with_obs_intervals=False)
-
-        # No typed-column attributes in v1; columns are plain VectorData.
         self.assertEqual(len(run["presence_ratio"].data), 3)
         self.assertEqual(len(run["isi_violations_ratio"].data), 3)
         self.assertEqual(len(run["amplitude_cutoff"].data), 3)
@@ -1492,7 +1476,7 @@ class TestUnitMetricsRoundtrip(TestCase):
         )
         units_region = create_units_region(self.nwbfile)
 
-        run = create_mock_unit_metrics(self.nwbfile, with_obs_intervals=True)
+        run = create_mock_unit_metrics(self.nwbfile)
 
         extensions = SpikeSortingExtensions(name="extensions")
         extensions.add_unit_metrics(run)
@@ -1526,10 +1510,80 @@ class TestUnitMetricsRoundtrip(TestCase):
             np.testing.assert_array_almost_equal(
                 read_run["isi_violations_ratio"][:], run["isi_violations_ratio"].data
             )
-            # obs_intervals round-trip: VectorIndex view gives cumulative, target gives flat data
+
+
+class TestValidUnitPeriodsConstructor(TestCase):
+    """Unit tests for ValidUnitPeriods constructor."""
+
+    def test_constructor(self):
+        """Test that ValidUnitPeriods constructor sets values correctly."""
+        nwbfile = set_up_nwbfile()
+        valid_periods = create_mock_valid_unit_periods(nwbfile)
+
+        self.assertEqual(valid_periods.name, "valid_unit_periods")
+        # 3 units * 2 periods each = 6 rows
+        self.assertEqual(len(valid_periods["start_time"].data), 6)
+        self.assertEqual(len(valid_periods["stop_time"].data), 6)
+        self.assertEqual(len(valid_periods["unit"].data), 6)
+
+
+class TestValidUnitPeriodsRoundtrip(TestCase):
+    """Roundtrip test for ValidUnitPeriods."""
+
+    def setUp(self):
+        self.nwbfile = set_up_nwbfile()
+        self.path = "test_valid_unit_periods.nwb"
+
+    def tearDown(self):
+        remove_test_file(self.path)
+
+    def test_roundtrip(self):
+        """Test writing and reading ValidUnitPeriods."""
+        electrodes_region = self.nwbfile.create_electrode_table_region(
+            region=list(range(10)),
+            description="all electrodes",
+        )
+        units_region = create_units_region(self.nwbfile)
+
+        valid_periods = create_mock_valid_unit_periods(self.nwbfile)
+
+        extensions = SpikeSortingExtensions(name="extensions")
+        extensions.valid_unit_periods = valid_periods
+
+        container = SpikeSortingContainer(
+            name="spike_sorting",
+            sampling_frequency=30000.0,
+            electrodes=electrodes_region,
+            units_region=units_region,
+        )
+        container.spike_sorting_extensions = extensions
+
+        ecephys_module = self.nwbfile.create_processing_module(
+            name="ecephys",
+            description="Extracellular electrophysiology processing",
+        )
+        ecephys_module.add(container)
+
+        with NWBHDF5IO(self.path, mode="w") as io:
+            io.write(self.nwbfile)
+
+        with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
+            read_nwbfile = io.read()
+            read_container = read_nwbfile.processing["ecephys"]["spike_sorting"]
+            read_extensions = read_container.spike_sorting_extensions
+            read_valid_periods = read_extensions.valid_unit_periods
+
+            np.testing.assert_array_almost_equal(
+                read_valid_periods["start_time"][:],
+                valid_periods["start_time"].data,
+            )
+            np.testing.assert_array_almost_equal(
+                read_valid_periods["stop_time"][:],
+                valid_periods["stop_time"].data,
+            )
             np.testing.assert_array_equal(
-                read_run["obs_intervals"].target.data[:],
-                run["obs_intervals"].target.data,
+                read_valid_periods["unit"].data[:],
+                valid_periods["unit"].data,
             )
 
 

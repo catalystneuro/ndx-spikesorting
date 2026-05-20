@@ -366,9 +366,7 @@ def _convert_unit_metrics(
 
     Each row of the table references one unit (via the ``unit``
     ``DynamicTableRegion``) and carries that unit's run-dependent metric values
-    as typed columns. If ``valid_unit_periods`` is also computed, the per-unit
-    valid windows are written as ``obs_intervals`` on the table. Returns
-    ``None`` when ``quality_metrics`` is not computed.
+    as typed columns. Returns ``None`` when ``quality_metrics`` is not computed.
     """
     qm_ext = sorting_analyzer.get_extension("quality_metrics")
     if qm_ext is None:
@@ -416,52 +414,51 @@ def _convert_unit_metrics(
             )
         )
 
-    # If valid_unit_periods is computed, store the per-unit windows as
-    # obs_intervals on this UnitMetrics instance. obs_intervals is ragged by row
-    # (one row per unit), each cell holds the list of (start, stop) windows
-    # used to restrict that unit's metric computation.
-    vup_ext = sorting_analyzer.get_extension("valid_unit_periods")
-    if vup_ext is not None:
-        if sorting_analyzer.get_num_segments() > 1:
-            raise NotImplementedError(
-                "valid_unit_periods round-trip is single-segment only; "
-                "multi-segment support not yet implemented."
-            )
-        sampling_frequency = sorting_analyzer.sampling_frequency
-        valid_periods_data = vup_ext.get_data(outputs="numpy")
-        per_unit_windows: list[list[tuple[float, float]]] = [[] for _ in range(n_units)]
-        for period in valid_periods_data:
-            unit_idx = int(period["unit_index"])
-            start_s = float(period["start_sample_index"]) / sampling_frequency
-            stop_s = float(period["end_sample_index"]) / sampling_frequency
-            per_unit_windows[unit_idx].append((start_s, stop_s))
-
-        flat_intervals: list[list[float]] = []
-        cumulative = []
-        running = 0
-        for windows in per_unit_windows:
-            for start_s, stop_s in windows:
-                flat_intervals.append([start_s, stop_s])
-            running += len(windows)
-            cumulative.append(running)
-
-        obs_intervals_vd = VectorData(
-            name="obs_intervals",
-            data=np.array(flat_intervals, dtype=np.float64) if flat_intervals else np.zeros((0, 2)),
-            description="Per-unit observation intervals (start, stop) in seconds.",
-        )
-        obs_intervals_index = VectorIndex(
-            name="obs_intervals_index",
-            data=np.array(cumulative, dtype=np.int64),
-            target=obs_intervals_vd,
-        )
-        columns.append(obs_intervals_vd)
-        columns.append(obs_intervals_index)
-
     return UnitMetrics(
         name="quality_metrics",
         description="Run-dependent per-unit metrics from one analysis run.",
         columns=columns,
+    )
+
+
+def _convert_valid_unit_periods(
+    sorting_analyzer: "SortingAnalyzer",
+    units_table=None,
+) -> ValidUnitPeriods | None:
+    ext = sorting_analyzer.get_extension("valid_unit_periods")
+    if ext is None:
+        return None
+    valid_periods_data = ext.get_data(outputs="numpy")
+    sampling_frequency = sorting_analyzer.sampling_frequency
+
+    start_times = []
+    stop_times = []
+    unit_indices = []
+
+    for period in valid_periods_data:
+        start_times.append(float(period["start_sample_index"]) / sampling_frequency)
+        stop_times.append(float(period["end_sample_index"]) / sampling_frequency)
+        unit_indices.append(int(period["unit_index"]))
+
+    vup_unit_column = DynamicTableRegion(
+        name="unit",
+        data=unit_indices,
+        description="Reference to units table for each valid period.",
+        table=units_table,
+    )
+
+    return ValidUnitPeriods(
+        name="valid_unit_periods",
+        description="Valid time periods per unit from spike sorting quality estimation.",
+        columns=[
+            VectorData(
+                name="start_time", data=start_times, description="Start time of each valid period in seconds."
+            ),
+            VectorData(
+                name="stop_time", data=stop_times, description="Stop time of each valid period in seconds."
+            ),
+            vup_unit_column,
+        ],
     )
 
 
@@ -668,6 +665,10 @@ def _convert_all_extensions(sorting_analyzer, nwbfile):  # noqa: C901
     unit_metrics = _convert_unit_metrics(sorting_analyzer, nwbfile)
     if unit_metrics is not None:
         converted["__unit_metrics__"] = unit_metrics
+
+    vup = _convert_valid_unit_periods(sorting_analyzer, units_table=nwbfile.units)
+    if vup is not None:
+        converted["valid_unit_periods"] = vup
 
     return converted
 
@@ -896,6 +897,7 @@ def read_sorting_analyzer_from_nwb(
             _load_spike_locations(extensions, sorting_analyzer)
             _load_pca_projections(extensions, sorting_analyzer)
             _load_unit_metrics(extensions, sorting_analyzer)
+            _load_valid_unit_periods_from_nwb(extensions, sorting_analyzer)
 
         # Cell-intrinsic metrics live on nwbfile.units as typed columns; read
         # them by column type so the SI extension binding survives even if a
@@ -1244,17 +1246,14 @@ def _load_cell_intrinsic_from_units(units_table, sorting_analyzer: "SortingAnaly
 
 
 def _load_unit_metrics(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
-    """Read UnitMetrics instances and reconstruct SI's ``quality_metrics`` and
-    ``valid_unit_periods`` extensions.
+    """Read UnitMetrics instances and reconstruct SI's ``quality_metrics`` extension.
 
-    Each UnitMetrics is a curation run; its typed columns populate
-    ``quality_metrics``, and its ``obs_intervals`` (if present) populate
-    ``valid_unit_periods``. For v1 we expect at most one UnitMetrics per file
-    and route it directly. Multi-run support (each run distinguished by name
-    or parameter context) is a follow-up.
+    Each UnitMetrics is a curation run whose typed (and plain) columns populate
+    ``quality_metrics``. For v1 we expect at most one UnitMetrics per file and
+    route it directly. Multi-run support (each run distinguished by name or
+    parameter context) is a follow-up.
     """
     import pandas as pd
-    from spikeinterface.core.base import unit_period_dtype
     from spikeinterface.core.sortinganalyzer import get_extension_class
 
     unit_metrics = getattr(extensions, "unit_metrics", None)
@@ -1269,7 +1268,7 @@ def _load_unit_metrics(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
         per_extension_params: dict[str, dict] = {}
 
         for col_name in nwb_table.colnames:
-            if col_name in ("unit", "obs_intervals", "obs_intervals_index"):
+            if col_name == "unit":
                 continue
             col = nwb_table[col_name]
             # First try the typed-column registry (empty in v1; kept for forward
@@ -1303,44 +1302,34 @@ def _load_unit_metrics(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
             ext.run_info = {"run_completed": True, "runtime_s": 0.0}
             sorting_analyzer.extensions[si_ext_name] = ext
 
-        # Reconstruct valid_unit_periods from obs_intervals if present.
-        if "obs_intervals" in nwb_table.colnames:
-            # nwb_table["obs_intervals"] returns the VectorIndex (the
-            # per-row cumulative boundaries); its .target is the underlying
-            # VectorData with the flat (total_intervals, 2) array.
-            obs_intervals_vi = nwb_table["obs_intervals"]
-            cum = np.asarray(obs_intervals_vi.data[:])
-            flat = np.asarray(obs_intervals_vi.target.data[:])
-            sampling_frequency = sorting_analyzer.sampling_frequency
 
-            periods_list = []
-            prev = 0
-            for unit_idx, end in enumerate(cum):
-                for row in flat[prev:end]:
-                    start_s, stop_s = float(row[0]), float(row[1])
-                    periods_list.append(
-                        (
-                            0,
-                            int(round(start_s * sampling_frequency)),
-                            int(round(stop_s * sampling_frequency)),
-                            unit_idx,
-                        )
-                    )
-                prev = int(end)
+def _load_valid_unit_periods_from_nwb(extensions, sorting_analyzer):
+    from spikeinterface.core.base import unit_period_dtype
+    from spikeinterface.core.sortinganalyzer import get_extension_class
 
-            if periods_list:
-                vup_array = np.array(periods_list, dtype=unit_period_dtype)
-                vup_class = get_extension_class("valid_unit_periods")
-                if vup_class is not None:
-                    vup_ext = vup_class(sorting_analyzer)
-                    vup_ext.set_params(
-                        method="user_defined",
-                        user_defined_periods=vup_array,
-                        minimum_valid_period_duration=0,
-                    )
-                    vup_ext.data["valid_unit_periods"] = vup_array
-                    vup_ext.run_info = {"run_completed": True, "runtime_s": 0.0}
-                    sorting_analyzer.extensions["valid_unit_periods"] = vup_ext
+    valid_periods_nwb = getattr(extensions, "valid_unit_periods", None)
+    if valid_periods_nwb is None:
+        return
+
+    start_times = np.array(valid_periods_nwb["start_time"][:], dtype=np.float64)
+    stop_times = np.array(valid_periods_nwb["stop_time"][:], dtype=np.float64)
+    unit_indices = np.array(valid_periods_nwb["unit"].data[:], dtype=np.int64)
+
+    sampling_frequency = sorting_analyzer.sampling_frequency
+    n_periods = len(start_times)
+
+    valid_periods = np.zeros(n_periods, dtype=unit_period_dtype)
+    valid_periods["segment_index"] = 0
+    valid_periods["start_sample_index"] = np.round(start_times * sampling_frequency).astype(np.int64)
+    valid_periods["end_sample_index"] = np.round(stop_times * sampling_frequency).astype(np.int64)
+    valid_periods["unit_index"] = unit_indices
+
+    ext_class = get_extension_class("valid_unit_periods")
+    ext = ext_class(sorting_analyzer)
+    ext.set_params(method="user_defined", user_defined_periods=valid_periods, minimum_valid_period_duration=0)
+    ext.data["valid_unit_periods"] = valid_periods
+    ext.run_info = {"run_completed": True, "runtime_s": 0.0}
+    sorting_analyzer.extensions["valid_unit_periods"] = ext
 
 
 def _load_pca_projections(extensions, sorting_analyzer: "SortingAnalyzer") -> None:

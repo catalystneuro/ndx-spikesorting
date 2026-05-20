@@ -2,11 +2,9 @@ datasets:
 - neurodata_type_def: FiringRate
   neurodata_type_inc: VectorData
   dtype: float
-  doc: Mean firing rate of the unit. When obs_intervals is populated on the 
-    units table, the rate is computed over the union of the unit's valid windows
-    (n_spikes_in_valid_windows / sum(valid_durations)). When obs_intervals is 
-    absent or empty, the rate is computed over the whole recording duration. 
-    Cell-intrinsic property; written as a column on nwbfile.units.
+  doc: Mean firing rate of the unit, computed as the number of spikes divided by
+    the recording duration. Cell-intrinsic property; written as a column on 
+    nwbfile.units.
   attributes:
   - name: unit
     dtype: text
