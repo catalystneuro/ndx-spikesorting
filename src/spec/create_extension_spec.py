@@ -549,6 +549,42 @@ def main():
         ],
     )
 
+    # Canonical typed VectorData columns for nwbfile.units (cell-intrinsic).
+    firing_rate = NWBDatasetSpec(
+        neurodata_type_def="FiringRate",
+        neurodata_type_inc="VectorData",
+        dtype="float",
+        doc=(
+            "Mean firing rate of the unit (number of spikes divided by the "
+            "duration of the time support). Cell-intrinsic property; written "
+            "as a column on nwbfile.units. The time support, defined as the "
+            "set of intervals over which the metric is computed, is taken to "
+            "be the unit's row in the Units.obs_intervals column when "
+            "populated, and the full session timestamp range otherwise."
+        ),
+        attributes=[
+            NWBAttributeSpec(
+                name="unit",
+                dtype="text",
+                value="hertz",
+                doc="Unit of measurement.",
+            ),
+        ],
+    )
+
+    num_spikes = NWBDatasetSpec(
+        neurodata_type_def="NumSpikes",
+        neurodata_type_inc="VectorData",
+        dtype="int64",
+        doc=(
+            "Total spike count per unit. Cell-intrinsic property; written as "
+            "a column on nwbfile.units. The time support, defined as the set "
+            "of intervals over which the count is taken, is the unit's row in "
+            "Units.obs_intervals when populated, and the full session "
+            "timestamp range otherwise."
+        ),
+    )
+
     # ValidUnitPeriods: valid time periods for each unit using TimeIntervals
     valid_unit_periods = NWBGroupSpec(
         neurodata_type_def="ValidUnitPeriods",
@@ -736,6 +772,8 @@ def main():
         amplitude_scalings,
         pca_projections_by_channel,
         pca_projections_concatenated,
+        firing_rate,
+        num_spikes,
         valid_unit_periods,
         spike_sorting_extensions,
         spike_sorting_container,

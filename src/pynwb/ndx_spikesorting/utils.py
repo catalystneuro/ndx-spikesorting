@@ -26,10 +26,30 @@ from ndx_spikesorting import (
     AmplitudeScalings,
     PCAProjectionsByChannel,
     PCAProjectionsConcatenated,
+    FiringRate,
+    NumSpikes,
     ValidUnitPeriods,
     SpikeSortingExtensions,
     SpikeSortingContainer,
 )
+
+
+# Registry of canonical typed VectorData classes for nwbfile.units
+# (cell-intrinsic columns), mapping each class to (si_metric_name,
+# si_extension_name). The writer pulls per-unit values from the named SI
+# extension; the reader routes typed columns back to that extension when
+# reconstructing a SortingAnalyzer.
+#
+# Aliasing: ``firing_rate`` and ``num_spikes`` are produced by both
+# ``quality_metrics`` and ``spiketrain_metrics`` in SpikeInterface. The
+# typed-column canonical home is ``spiketrain_metrics``. On write, the
+# writer prefers ``spiketrain_metrics`` and falls back to ``quality_metrics``
+# if only the latter is computed. On read, the typed column is routed only
+# to ``spiketrain_metrics`` (no double-write into ``quality_metrics``).
+UNITS_TYPED_COLUMNS: dict = {
+    FiringRate: ("firing_rate", "spiketrain_metrics"),
+    NumSpikes: ("num_spikes", "spiketrain_metrics"),
+}
 
 
 def templates_to_dense(templates: Templates, num_channels: int) -> np.ndarray:
@@ -523,8 +543,67 @@ def _convert_all_extensions(sorting_analyzer, nwbfile):  # noqa: C901
     return converted
 
 
+def _add_cell_intrinsic_columns_to_units(
+    sorting_analyzer: "SortingAnalyzer",
+    nwbfile: NWBFile,
+) -> None:
+    """Add canonical typed VectorData columns to ``nwbfile.units``.
+
+    Pulls per-unit values from SpikeInterface extensions and writes them as
+    typed columns whose class is the canonical type for that metric
+    (e.g. ``FiringRate``). Routing is driven by ``UNITS_TYPED_COLUMNS``.
+
+    For columns whose canonical home is ``spiketrain_metrics`` but which
+    SpikeInterface also produces in ``quality_metrics`` (``firing_rate``,
+    ``num_spikes``), this function falls back to ``quality_metrics`` when
+    only the latter is computed.
+    """
+    if nwbfile.units is None:
+        return
+
+    n_units = len(sorting_analyzer.unit_ids)
+    if len(nwbfile.units) != n_units:
+        raise ValueError(
+            f"Mismatch between nwbfile.units ({len(nwbfile.units)} rows) and "
+            f"sorting_analyzer.unit_ids ({n_units} units). Add the sorting to the "
+            "NWB file before calling add_sorting_analyzer_to_nwbfile."
+        )
+
+    extension_data_cache: dict = {}
+
+    def _get_extension_df(ext_name: str):
+        if ext_name not in extension_data_cache:
+            ext = sorting_analyzer.get_extension(ext_name)
+            extension_data_cache[ext_name] = ext.get_data() if ext is not None else None
+        return extension_data_cache[ext_name]
+
+    for col_cls, (si_name, si_ext_name) in UNITS_TYPED_COLUMNS.items():
+        if si_name in nwbfile.units.colnames:
+            continue
+        df = _get_extension_df(si_ext_name)
+        if df is None or si_name not in df.columns:
+            # Aliasing fallback for firing_rate / num_spikes which SI also
+            # produces in quality_metrics.
+            df = _get_extension_df("quality_metrics")
+        if df is None or si_name not in df.columns:
+            continue
+        nwbfile.units.add_column(
+            name=si_name,
+            description=col_cls.__doc__ or si_name,
+            data=df[si_name].to_numpy(),
+            col_cls=col_cls,
+        )
+
+
 def _build_extensions(sorting_analyzer, nwbfile):
-    """Convert extensions and assemble a SpikeSortingExtensions object."""
+    """Convert extensions and assemble a SpikeSortingExtensions object.
+
+    Cell-intrinsic typed columns are added directly to ``nwbfile.units`` as a
+    side effect, since they are per-unit properties of the cells themselves
+    rather than container-level extension data.
+    """
+    _add_cell_intrinsic_columns_to_units(sorting_analyzer, nwbfile)
+
     converted = _convert_all_extensions(sorting_analyzer, nwbfile)
     extensions = SpikeSortingExtensions(name="extensions")
     for attr, obj in converted.items():
@@ -736,6 +815,11 @@ def read_sorting_analyzer_from_nwb(
             _load_spike_locations(extensions, sorting_analyzer)
             _load_pca_projections(extensions, sorting_analyzer)
             _load_valid_unit_periods_from_nwb(extensions, sorting_analyzer)
+
+        # Cell-intrinsic typed columns live on nwbfile.units; route them back
+        # to their canonical SI extension via UNITS_TYPED_COLUMNS.
+        if nwbfile.units is not None:
+            _load_cell_intrinsic_from_units(nwbfile.units, sorting_analyzer)
 
     return sorting_analyzer
 
@@ -1157,3 +1241,43 @@ def _load_pca_concatenated(pc_nwb, sorting_analyzer: "SortingAnalyzer") -> None:
     ext.data["pca_projection"] = all_projections
     ext.run_info = {"run_completed": True, "runtime_s": 0.0}
     sorting_analyzer.extensions["principal_components"] = ext
+
+def _load_cell_intrinsic_from_units(units_table, sorting_analyzer: "SortingAnalyzer") -> None:
+    """Read canonical typed columns from a Units table into SI extensions.
+
+    Walks ``units_table`` and finds columns that are instances of canonical
+    typed VectorData classes (per ``UNITS_TYPED_COLUMNS``), then builds the
+    corresponding SpikeInterface extension on ``sorting_analyzer`` so the
+    values round-trip back into a ``SortingAnalyzer``.
+
+    Typed columns route only to their canonical SI extension (e.g.
+    ``FiringRate`` -> ``spiketrain_metrics``); the alias targets in
+    ``quality_metrics`` are not double-populated.
+    """
+    import pandas as pd
+    from spikeinterface.core.sortinganalyzer import get_extension_class
+
+    per_extension_columns: dict[str, dict[str, np.ndarray]] = {}
+    for col_name in units_table.colnames:
+        col = units_table[col_name]
+        for col_cls, (si_name, si_ext_name) in UNITS_TYPED_COLUMNS.items():
+            if isinstance(col, col_cls):
+                per_extension_columns.setdefault(si_ext_name, {})[si_name] = np.asarray(col.data[:])
+                break
+
+    for si_ext_name, columns_dict in per_extension_columns.items():
+        ext_class = get_extension_class(si_ext_name)
+        if ext_class is None:
+            continue
+        unit_ids = sorting_analyzer.unit_ids
+        metrics_df = pd.DataFrame(columns_dict, index=unit_ids)
+        ext = ext_class(sorting_analyzer)
+        ext.params = {
+            "metric_names": list(columns_dict.keys()),
+            "metric_params": {},
+            "metrics_to_compute": list(columns_dict.keys()),
+            "delete_existing_metrics": False,
+        }
+        ext.data["metrics"] = metrics_df
+        ext.run_info = {"run_completed": True, "runtime_s": 0.0}
+        sorting_analyzer.extensions[si_ext_name] = ext
