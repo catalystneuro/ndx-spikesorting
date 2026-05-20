@@ -27,7 +27,7 @@ from ndx_spikesorting import (
     PCAProjectionsByChannel,
     PCAProjectionsConcatenated,
     FiringRate,
-    MetricsRun,
+    UnitMetrics,
     SpikeSortingExtensions,
     SpikeSortingContainer,
 )
@@ -43,23 +43,16 @@ from ndx_spikesorting import (
 # This mapping is the single point of SI knowledge in the loader; the spec
 # itself stays tool-agnostic.
 
+# Mapping from canonical typed column class -> (si_metric_name, si_extension_name).
+# The writer routes SI's DataFrame columns to typed columns when the class is
+# registered here; otherwise the column is written as plain VectorData.
 CELL_INTRINSIC_COLUMNS = {
-    # column class -> (si_metric_name, si_extension_name)
-    # v1 canonizes one column to illustrate the pattern. Other candidates
-    # (peak_to_trough_duration, trough_half_width, amplitude_median) round-trip
-    # as plain VectorData columns on nwbfile.units until they get their own
-    # follow-up PR with cross-pipeline-variability discussion.
     FiringRate: ("firing_rate", "spiketrain_metrics"),
 }
 
-# Run-dependent metrics flow into MetricsRun instances as plain VectorData
-# columns. No typed-column classes are committed in v1 because each candidate
-# (Snr, PresenceRatio, IsiViolationsRatio, AmplitudeCutoff) requires multiple
-# attributes to capture cross-pipeline variability and the field has not
-# converged on canonical conventions. The writer below pulls SI's
-# quality_metrics DataFrame columns and writes them as untyped float columns
-# on the MetricsRun instance, preserving column names so the SI extension can
-# be reconstructed on read.
+# No typed column classes are registered yet for the run-dependent side;
+# run-dependent metrics flow as plain VectorData columns onto UnitMetrics
+# instances. The registry is kept for forward compatibility.
 RUN_DEPENDENT_COLUMNS: dict = {}
 
 
@@ -375,11 +368,11 @@ def _add_cell_intrinsic_columns_to_units(
         )
 
 
-def _convert_metrics_run(
+def _convert_unit_metrics(
     sorting_analyzer: "SortingAnalyzer",
     nwbfile: NWBFile,
-) -> MetricsRun | None:
-    """Build a MetricsRun instance from SI's ``quality_metrics`` extension.
+) -> UnitMetrics | None:
+    """Build a UnitMetrics instance from SI's ``quality_metrics`` extension.
 
     Each row of the table references one unit (via the ``unit``
     ``DynamicTableRegion``) and carries that unit's run-dependent metric values
@@ -418,7 +411,7 @@ def _convert_metrics_run(
         typed_column_names.add(si_name)
 
     # The remaining quality_metrics DataFrame columns become plain VectorData
-    # on the MetricsRun instance. Column names are preserved so the loader can
+    # on the UnitMetrics instance. Column names are preserved so the loader can
     # reconstruct SI's quality_metrics extension on read.
     for col_name in df.columns:
         if col_name in typed_column_names:
@@ -434,7 +427,7 @@ def _convert_metrics_run(
         )
 
     # If valid_unit_periods is computed, store the per-unit windows as
-    # valid_intervals on this MetricsRun instance. valid_intervals is ragged by row
+    # valid_intervals on this UnitMetrics instance. valid_intervals is ragged by row
     # (one row per unit), each cell holds the list of (start, stop) windows
     # used to restrict that unit's metric computation.
     vup_ext = sorting_analyzer.get_extension("valid_unit_periods")
@@ -475,7 +468,7 @@ def _convert_metrics_run(
         columns.append(valid_intervals_vd)
         columns.append(valid_intervals_index)
 
-    return MetricsRun(
+    return UnitMetrics(
         name="quality_metrics",
         description="Run-dependent per-unit metrics from one analysis run.",
         columns=columns,
@@ -679,12 +672,12 @@ def _convert_all_extensions(sorting_analyzer, nwbfile):  # noqa: C901
             raise ValueError("PCA projections require waveforms to be computed.")
         converted.update(_convert_pca(sorting_analyzer, nwbfile, converted["waveforms"]))
 
-    # Run-dependent metrics flow into a MetricsRun instance (or several, as
+    # Run-dependent metrics flow into a UnitMetrics instance (or several, as
     # support for multiple curation runs is added). For v1 there is one
-    # MetricsRun per file, sourced from SI's quality_metrics extension.
-    metrics_run = _convert_metrics_run(sorting_analyzer, nwbfile)
-    if metrics_run is not None:
-        converted["__metrics_run__"] = metrics_run
+    # UnitMetrics per file, sourced from SI's quality_metrics extension.
+    unit_metrics = _convert_unit_metrics(sorting_analyzer, nwbfile)
+    if unit_metrics is not None:
+        converted["__unit_metrics__"] = unit_metrics
 
     return converted
 
@@ -702,8 +695,8 @@ def _build_extensions(sorting_analyzer, nwbfile):
     converted = _convert_all_extensions(sorting_analyzer, nwbfile)
     extensions = SpikeSortingExtensions(name="extensions")
     for attr, obj in converted.items():
-        if attr == "__metrics_run__":
-            extensions.add_metrics_runs(obj)
+        if attr == "__unit_metrics__":
+            extensions.add_unit_metrics(obj)
         else:
             setattr(extensions, attr, obj)
     return extensions
@@ -912,7 +905,7 @@ def read_sorting_analyzer_from_nwb(
             _load_amplitude_scalings(extensions, sorting_analyzer)
             _load_spike_locations(extensions, sorting_analyzer)
             _load_pca_projections(extensions, sorting_analyzer)
-            _load_metrics_runs(extensions, sorting_analyzer)
+            _load_unit_metrics(extensions, sorting_analyzer)
 
         # Cell-intrinsic metrics live on nwbfile.units as typed columns; read
         # them by column type so the SI extension binding survives even if a
@@ -1212,8 +1205,8 @@ def _load_cell_intrinsic_from_units(units_table, sorting_analyzer: "SortingAnaly
     typed VectorData classes, and populates the corresponding SI extension
     DataFrames. Routes by column class via ``CELL_INTRINSIC_COLUMNS``.
 
-    When a target SI extension was already populated by ``_load_metrics_runs``
-    (e.g. quality_metrics receives both ``Snr`` from a MetricsRun and
+    When a target SI extension was already populated by ``_load_unit_metrics``
+    (e.g. quality_metrics receives both ``Snr`` from a UnitMetrics and
     ``AmplitudeMedian`` from a Units column), this function merges into the
     existing DataFrame rather than overwriting it.
     """
@@ -1232,7 +1225,7 @@ def _load_cell_intrinsic_from_units(units_table, sorting_analyzer: "SortingAnaly
         existing = sorting_analyzer.extensions.get(si_ext_name)
         if existing is not None:
             # Merge into existing DataFrame; preserve any params/metric_names set
-            # by the prior loader (typically _load_metrics_runs for quality_metrics).
+            # by the prior loader (typically _load_unit_metrics for quality_metrics).
             existing_df = existing.data.get("metrics")
             if existing_df is not None:
                 for col_name, values in columns_dict.items():
@@ -1260,13 +1253,13 @@ def _load_cell_intrinsic_from_units(units_table, sorting_analyzer: "SortingAnaly
         sorting_analyzer.extensions[si_ext_name] = ext
 
 
-def _load_metrics_runs(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
-    """Read MetricsRun instances and reconstruct SI's ``quality_metrics`` and
+def _load_unit_metrics(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
+    """Read UnitMetrics instances and reconstruct SI's ``quality_metrics`` and
     ``valid_unit_periods`` extensions.
 
-    Each MetricsRun is a curation run; its typed columns populate
+    Each UnitMetrics is a curation run; its typed columns populate
     ``quality_metrics``, and its ``valid_intervals`` (if present) populate
-    ``valid_unit_periods``. For v1 we expect at most one MetricsRun per file
+    ``valid_unit_periods``. For v1 we expect at most one UnitMetrics per file
     and route it directly. Multi-run support (each run distinguished by name
     or parameter context) is a follow-up.
     """
@@ -1274,12 +1267,12 @@ def _load_metrics_runs(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
     from spikeinterface.core.base import unit_period_dtype
     from spikeinterface.core.sortinganalyzer import get_extension_class
 
-    metrics_runs = getattr(extensions, "metrics_runs", None)
-    if not metrics_runs:
+    unit_metrics = getattr(extensions, "unit_metrics", None)
+    if not unit_metrics:
         return
 
-    # Iterate over MetricsRun instances (LabelledDict keyed by name)
-    runs = metrics_runs.values() if hasattr(metrics_runs, "values") else [metrics_runs]
+    # Iterate over UnitMetrics instances (LabelledDict keyed by name)
+    runs = unit_metrics.values() if hasattr(unit_metrics, "values") else [unit_metrics]
     for nwb_table in runs:
         unit_ids = sorting_analyzer.unit_ids
         per_extension_columns: dict[str, dict[str, np.ndarray]] = {}

@@ -23,7 +23,7 @@ from ndx_spikesorting import (
     SpikeLocations,
     PCAProjectionsByChannel,
     PCAProjectionsConcatenated,
-    MetricsRun,
+    UnitMetrics,
     SpikeSortingExtensions,
     SpikeSortingContainer,
 )
@@ -1368,8 +1368,8 @@ class TestAmplitudeScalingsRoundtrip(TestCase):
             )
 
 
-def create_mock_metrics_run(nwbfile: NWBFile, num_units: int = 3, with_valid_intervals: bool = True):
-    """Create a mock MetricsRun with plain (untyped) VectorData metric columns.
+def create_mock_unit_metrics(nwbfile: NWBFile, num_units: int = 3, with_valid_intervals: bool = True):
+    """Create a mock UnitMetrics with plain (untyped) VectorData metric columns.
 
     In v1 no run-dependent metric is canonized as a typed column type (each
     candidate needs multiple attributes to capture cross-pipeline variability;
@@ -1431,20 +1431,20 @@ def create_mock_metrics_run(nwbfile: NWBFile, num_units: int = 3, with_valid_int
         columns.append(valid_intervals_vd)
         columns.append(valid_intervals_idx)
 
-    return MetricsRun(
+    return UnitMetrics(
         name="quality_metrics",
         description="Run-dependent per-unit metrics from one analysis run.",
         columns=columns,
     )
 
 
-class TestMetricsRunConstructor(TestCase):
-    """Unit tests for MetricsRun constructor."""
+class TestUnitMetricsConstructor(TestCase):
+    """Unit tests for UnitMetrics constructor."""
 
     def test_constructor_without_intervals(self):
-        """MetricsRun is constructed with typed metric columns."""
+        """UnitMetrics is constructed with typed metric columns."""
         nwbfile = set_up_nwbfile()
-        run = create_mock_metrics_run(nwbfile, with_valid_intervals=False)
+        run = create_mock_unit_metrics(nwbfile, with_valid_intervals=False)
 
         self.assertEqual(run.name, "quality_metrics")
         self.assertIn("presence_ratio", run.colnames)
@@ -1455,18 +1455,18 @@ class TestMetricsRunConstructor(TestCase):
         self.assertEqual(len(run["presence_ratio"].data), 3)
 
     def test_constructor_with_intervals(self):
-        """MetricsRun carries valid_intervals as a ragged column."""
+        """UnitMetrics carries valid_intervals as a ragged column."""
         nwbfile = set_up_nwbfile()
-        run = create_mock_metrics_run(nwbfile, with_valid_intervals=True)
+        run = create_mock_unit_metrics(nwbfile, with_valid_intervals=True)
 
         self.assertIn("valid_intervals", run.colnames)
         # 3 units * 2 windows => 6 intervals in the flat data
         self.assertEqual(run["valid_intervals"].target.data.shape, (6, 2))
 
     def test_plain_column_values(self):
-        """MetricsRun stores run-dependent metrics as plain VectorData (v1)."""
+        """UnitMetrics stores run-dependent metrics as plain VectorData (v1)."""
         nwbfile = set_up_nwbfile()
-        run = create_mock_metrics_run(nwbfile, with_valid_intervals=False)
+        run = create_mock_unit_metrics(nwbfile, with_valid_intervals=False)
 
         # No typed-column attributes in v1; columns are plain VectorData.
         self.assertEqual(len(run["presence_ratio"].data), 3)
@@ -1474,28 +1474,28 @@ class TestMetricsRunConstructor(TestCase):
         self.assertEqual(len(run["amplitude_cutoff"].data), 3)
 
 
-class TestMetricsRunRoundtrip(TestCase):
-    """Roundtrip test for MetricsRun."""
+class TestUnitMetricsRoundtrip(TestCase):
+    """Roundtrip test for UnitMetrics."""
 
     def setUp(self):
         self.nwbfile = set_up_nwbfile()
-        self.path = "test_metrics_run.nwb"
+        self.path = "test_unit_metrics.nwb"
 
     def tearDown(self):
         remove_test_file(self.path)
 
     def test_roundtrip(self):
-        """Test writing and reading a MetricsRun instance."""
+        """Test writing and reading a UnitMetrics instance."""
         electrodes_region = self.nwbfile.create_electrode_table_region(
             region=list(range(10)),
             description="all electrodes",
         )
         units_region = create_units_region(self.nwbfile)
 
-        run = create_mock_metrics_run(self.nwbfile, with_valid_intervals=True)
+        run = create_mock_unit_metrics(self.nwbfile, with_valid_intervals=True)
 
         extensions = SpikeSortingExtensions(name="extensions")
-        extensions.add_metrics_runs(run)
+        extensions.add_unit_metrics(run)
 
         container = SpikeSortingContainer(
             name="spike_sorting",
@@ -1518,7 +1518,7 @@ class TestMetricsRunRoundtrip(TestCase):
             read_nwbfile = io.read()
             read_container = read_nwbfile.processing["ecephys"]["spike_sorting"]
             read_extensions = read_container.spike_sorting_extensions
-            read_run = read_extensions.metrics_runs["quality_metrics"]
+            read_run = read_extensions.unit_metrics["quality_metrics"]
 
             np.testing.assert_array_almost_equal(
                 read_run["presence_ratio"][:], run["presence_ratio"].data
@@ -1975,7 +1975,7 @@ class TestReadSortingAnalyzerFromNwb(TestCase):
         """Extensions restored from the NWB file.
 
         v1 canonizes one typed column (FiringRate) on Units and writes
-        quality_metrics to MetricsRun as plain VectorData. template_metrics
+        quality_metrics to UnitMetrics as plain VectorData. template_metrics
         columns are not yet typed and are not currently round-tripped;
         follow-up PRs will canonize the remaining cell-intrinsic columns
         (peak_to_trough_duration, trough_half_width) and re-enable template
@@ -2087,14 +2087,14 @@ class TestReadSortingAnalyzerFromNwb(TestCase):
             }
             self.assertGreater(len(typed_columns), 0)
 
-    def test_metrics_run_present(self):
-        """Run-dependent metrics land in a MetricsRun instance inside extensions."""
+    def test_unit_metrics_present(self):
+        """Run-dependent metrics land in a UnitMetrics instance inside extensions."""
         from pynwb import NWBHDF5IO
 
         with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
             nwbfile = io.read()
             ext = nwbfile.processing["ecephys"]["spike_sorting"].spike_sorting_extensions
-            self.assertIn("quality_metrics", ext.metrics_runs)
+            self.assertIn("quality_metrics", ext.unit_metrics)
 
     def test_metric_values_roundtrip(self):
         """Reconstructed SI metric extensions hold the same values."""

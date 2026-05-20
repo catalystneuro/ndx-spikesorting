@@ -374,12 +374,12 @@ groups:
   - name: waveforms
     target_type: Waveforms
     doc: Link to the Waveforms from which these projections were computed.
-- neurodata_type_def: MetricsRun
+- neurodata_type_def: UnitMetrics
   neurodata_type_inc: DynamicTable
-  default_name: metrics_run
+  default_name: unit_metrics
   doc: One analysis run's worth of per-unit run-dependent metrics. Each row is 
     one unit; columns are run-dependent metric values stored as plain VectorData
-    (no canonical types committed in v1). Multiple MetricsRun instances coexist 
+    (no canonical types committed in v1). Multiple UnitMetrics instances coexist
     under SpikeSortingExtensions for multiple curation runs (default run, 
     valid-window-restricted run, per-period drift QC runs). The instance name 
     carries the run identity (e.g., 'quality_metrics_default', 
@@ -387,7 +387,7 @@ groups:
   datasets:
   - name: unit
     neurodata_type_inc: DynamicTableRegion
-    doc: Reference to the row in nwbfile.units that each row of this MetricsRun 
+    doc: Reference to the row in nwbfile.units that each row of this UnitMetrics
       describes. Makes row-to-unit alignment explicit.
   - name: valid_intervals
     neurodata_type_inc: VectorData
@@ -451,7 +451,7 @@ groups:
   - neurodata_type_inc: PCAProjectionsConcatenated
     doc: Concatenated-channels PCA projections of spikes (single-ragged).
     quantity: '?'
-  - neurodata_type_inc: MetricsRun
+  - neurodata_type_inc: UnitMetrics
     doc: Run-dependent per-unit metrics, one instance per analysis run. Multiple
       instances coexist for different curation runs.
     quantity: '*'
