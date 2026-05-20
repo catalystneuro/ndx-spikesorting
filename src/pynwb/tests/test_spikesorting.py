@@ -2068,12 +2068,12 @@ class TestReadSortingAnalyzerFromNwb(TestCase):
     def test_loads_all_extensions(self):
         """Extensions restored from the NWB file.
 
-        v1 canonizes one typed column (FiringRate) on Units and writes
-        quality_metrics to UnitMetrics as plain VectorData. template_metrics
-        columns are not yet typed and are not currently round-tripped;
-        follow-up PRs will canonize the remaining cell-intrinsic columns
-        (peak_to_trough_duration, trough_half_width) and re-enable template
-        metrics round-trip.
+        Quality, template, and spiketrain metric columns all live on a
+        single UnitMetrics table on disk; the reader uses
+        ``COLUMN_TO_EXTENSION`` to split them back into the right SI
+        extensions on read. ``FiringRate`` is the only canonized typed
+        column on Units in v1 (additional canonical columns are in
+        follow-up PRs); it routes to ``spiketrain_metrics``.
         """
         sa = self.read_fn(self.path)
         expected = {
@@ -2081,7 +2081,7 @@ class TestReadSortingAnalyzerFromNwb(TestCase):
             "unit_locations", "correlograms", "isi_histograms",
             "template_similarity", "spike_amplitudes", "amplitude_scalings",
             "spike_locations", "principal_components",
-            "quality_metrics", "spiketrain_metrics",
+            "quality_metrics", "template_metrics", "spiketrain_metrics",
         }
         self.assertEqual(set(sa.extensions.keys()), expected)
 
@@ -2210,3 +2210,68 @@ class TestReadSortingAnalyzerFromNwb(TestCase):
                 original_qm[col].to_numpy(),
                 equal_nan=True,
             )
+
+    def test_template_metrics_roundtrip(self):
+        """template_metrics columns split out of UnitMetrics into the right SI extension."""
+        sa = self.read_fn(self.path)
+
+        original_tm = self.sorting_analyzer.get_extension("template_metrics").get_data()
+        restored_tm = sa.get_extension("template_metrics").get_data()
+        # Sanity check: the SI extension is restored, not merged into quality_metrics.
+        self.assertIsNotNone(restored_tm)
+        # Every template-metric column from the original is present and equal.
+        for col in original_tm.columns:
+            self.assertIn(col, restored_tm.columns, f"template_metrics missing {col!r}")
+            np.testing.assert_allclose(
+                restored_tm[col].to_numpy(),
+                original_tm[col].to_numpy(),
+                equal_nan=True,
+            )
+
+    def test_quality_and_template_metrics_separated_on_read(self):
+        """quality_metrics and template_metrics extensions hold disjoint columns post-read.
+
+        Pre-fix, every column on UnitMetrics was funneled into quality_metrics,
+        which made template_metrics empty (or absent) and put template columns
+        like ``peak_to_trough_duration`` under quality_metrics.
+        """
+        sa = self.read_fn(self.path)
+
+        qm_cols = set(sa.get_extension("quality_metrics").get_data().columns)
+        tm_cols = set(sa.get_extension("template_metrics").get_data().columns)
+
+        # template_metrics columns should NOT be in quality_metrics.
+        leaked = {"peak_to_trough_duration", "trough_half_width", "peak_half_width"} & qm_cols
+        self.assertEqual(leaked, set(), f"template columns leaked into quality_metrics: {leaked}")
+
+        # quality_metrics columns should NOT be in template_metrics.
+        leaked = {"presence_ratio", "isi_violations_ratio"} & tm_cols
+        self.assertEqual(leaked, set(), f"quality columns leaked into template_metrics: {leaked}")
+
+    def test_column_to_extension_covers_all_computed_columns(self):
+        """COLUMN_TO_EXTENSION covers every column produced by the SI extensions
+        we compute in the fixture.
+
+        Acts as a guard: if SI adds a new column in a release, the test fails
+        with a clear message naming the uncovered column. Update
+        ``COLUMN_TO_EXTENSION`` in ``utils.py`` to silence.
+        """
+        from ndx_spikesorting.utils import COLUMN_TO_EXTENSION
+
+        uncovered = []
+        for ext_name in ("template_metrics", "quality_metrics", "spiketrain_metrics"):
+            ext = self.sorting_analyzer.get_extension(ext_name)
+            if ext is None:
+                continue
+            df_cols = ext.get_data().columns
+            for col in df_cols:
+                if col not in COLUMN_TO_EXTENSION:
+                    uncovered.append((ext_name, col))
+
+        self.assertEqual(
+            uncovered,
+            [],
+            "Columns produced by SpikeInterface (SI) but missing from "
+            f"COLUMN_TO_EXTENSION: {uncovered}. Add them to the dict in "
+            "src/pynwb/ndx_spikesorting/utils.py.",
+        )

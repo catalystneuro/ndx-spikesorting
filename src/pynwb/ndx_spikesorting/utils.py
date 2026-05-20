@@ -46,6 +46,80 @@ UNITS_TYPED_COLUMNS = {
 
 UNIT_METRICS_TYPED_COLUMNS: dict = {}
 
+# Hard-coded routing of UnitMetrics column names back into SpikeInterface (SI)
+# extension keys for the reader. The NWB file itself does not carry any
+# SI-specific tag on these columns; this dict is the only place where the
+# reader expresses "column X belongs to SI extension Y". Sourced from
+# ``spikeinterface.metrics.get_template_metric_list``,
+# ``get_quality_metric_list``, ``get_spiketrain_metric_list`` as of
+# SpikeInterface 0.104. Update when SI adds a new column. The dict-currency
+# guard test asserts that every column SI produces is covered here.
+#
+# Some columns (``num_spikes``, ``firing_rate``) are produced by multiple
+# SI extensions; we list every target so the reader replicates the column
+# value across each target extension. The reader merges values into existing
+# extension DataFrames when one was already populated by an earlier loader
+# step (typically the typed-column route via UNITS_TYPED_COLUMNS).
+COLUMN_TO_EXTENSION: dict[str, tuple[str, ...]] = {
+    # template_metrics (waveform morphology)
+    "peak_to_trough_duration": ("template_metrics",),
+    "trough_half_width": ("template_metrics",),
+    "peak_half_width": ("template_metrics",),
+    "repolarization_slope": ("template_metrics",),
+    "recovery_slope": ("template_metrics",),
+    "num_positive_peaks": ("template_metrics",),
+    "num_negative_peaks": ("template_metrics",),
+    "main_to_next_extremum_duration": ("template_metrics",),
+    "peak_before_to_trough_ratio": ("template_metrics",),
+    "peak_after_to_trough_ratio": ("template_metrics",),
+    "peak_before_to_peak_after_ratio": ("template_metrics",),
+    "main_peak_to_trough_ratio": ("template_metrics",),
+    "trough_width": ("template_metrics",),
+    "peak_before_width": ("template_metrics",),
+    "peak_after_width": ("template_metrics",),
+    "waveform_baseline_flatness": ("template_metrics",),
+    "velocity_above": ("template_metrics",),
+    "velocity_below": ("template_metrics",),
+    "exp_decay": ("template_metrics",),
+    "spread": ("template_metrics",),
+    # quality_metrics (sorting-run-dependent quality)
+    "presence_ratio": ("quality_metrics",),
+    "isi_violations_ratio": ("quality_metrics",),
+    "isi_violations_count": ("quality_metrics",),
+    "rp_contamination": ("quality_metrics",),
+    "rp_violations": ("quality_metrics",),
+    "sliding_rp_violation": ("quality_metrics",),
+    "amplitude_cutoff": ("quality_metrics",),
+    "noise_cutoff": ("quality_metrics",),
+    "noise_ratio": ("quality_metrics",),
+    "amplitude_median": ("quality_metrics",),
+    "amplitude_cv_median": ("quality_metrics",),
+    "amplitude_cv_range": ("quality_metrics",),
+    "sd_ratio": ("quality_metrics",),
+    "snr": ("quality_metrics",),
+    "isolation_distance": ("quality_metrics",),
+    "l_ratio": ("quality_metrics",),
+    "d_prime": ("quality_metrics",),
+    "nn_hit_rate": ("quality_metrics",),
+    "nn_miss_rate": ("quality_metrics",),
+    "nn_isolation": ("quality_metrics",),
+    "nn_noise_overlap": ("quality_metrics",),
+    "silhouette": ("quality_metrics",),
+    "silhouette_full": ("quality_metrics",),
+    "silhouette_simplified": ("quality_metrics",),
+    "sync_spike_2": ("quality_metrics",),
+    "sync_spike_4": ("quality_metrics",),
+    "sync_spike_8": ("quality_metrics",),
+    "firing_range": ("quality_metrics",),
+    "drift_ptp": ("quality_metrics",),
+    "drift_std": ("quality_metrics",),
+    "drift_mad": ("quality_metrics",),
+    "peak_channel": ("quality_metrics",),
+    # Aliased columns: produced by both quality_metrics and spiketrain_metrics
+    "num_spikes": ("quality_metrics", "spiketrain_metrics"),
+    "firing_rate": ("quality_metrics", "spiketrain_metrics"),
+}
+
 
 def templates_to_dense(templates: Templates, num_channels: int) -> np.ndarray:
     """Convert sparse ragged templates to a dense 3D array.
@@ -372,12 +446,33 @@ def _convert_unit_metrics(
     Returns ``None`` when ``quality_metrics`` is not computed.
     """
     qm_ext = sorting_analyzer.get_extension("quality_metrics")
-    if qm_ext is None:
+    tm_ext = sorting_analyzer.get_extension("template_metrics")
+    if qm_ext is None and tm_ext is None:
         return None
 
-    df = qm_ext.get_data()
+    # Combine quality_metrics and template_metrics columns into a single
+    # DataFrame. Each column will become a VectorData entry on the UnitMetrics
+    # table; on read, the loader uses COLUMN_TO_EXTENSION to route each column
+    # back to the right SI extension. We do not pull from spiketrain_metrics
+    # separately because its columns (num_spikes, firing_rate) are aliases of
+    # quality_metrics columns and already pulled via qm_ext.
+    if qm_ext is not None and tm_ext is not None:
+        qm_df = qm_ext.get_data()
+        tm_df = tm_ext.get_data()
+        overlap = set(qm_df.columns) & set(tm_df.columns)
+        if overlap:
+            # In SI 0.104 quality_metrics and template_metrics do not overlap.
+            # Guard for future versions: if a column appears in both, prefer
+            # the quality_metrics value (arbitrary but deterministic).
+            tm_df = tm_df.drop(columns=list(overlap))
+        df = qm_df.join(tm_df)
+    elif qm_ext is not None:
+        df = qm_ext.get_data()
+    else:
+        df = tm_ext.get_data()
+
     n_units = len(sorting_analyzer.unit_ids)
-    qm_params = qm_ext.params or {}
+    qm_params = qm_ext.params or {} if qm_ext is not None else {}
 
     # Per-row unit DTR pointing back to nwbfile.units (one row per unit).
     unit_column = DynamicTableRegion(
@@ -1290,13 +1385,18 @@ def _load_cell_intrinsic_from_units(units_table, sorting_analyzer: "SortingAnaly
 
 
 def _load_unit_metrics(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
-    """Read UnitMetrics instances and reconstruct SI's ``quality_metrics`` extension.
+    """Read UnitMetrics instances and reconstruct the relevant SI extensions.
 
-    Each UnitMetrics is a curation run whose typed (and plain) columns populate
-    ``quality_metrics``. For v1 we expect at most one UnitMetrics per file and
-    route it directly. Multi-run support (each run distinguished by name or
-    parameter context) is a follow-up.
+    Each UnitMetrics row holds one unit's metric values; column names identify
+    the metric. The loader routes each column to the SI extension it belongs to
+    using ``COLUMN_TO_EXTENSION``. A column listed under multiple extensions
+    (e.g., ``num_spikes`` belongs to both ``quality_metrics`` and
+    ``spiketrain_metrics``) is replicated into each target. A column not in the
+    dict falls back to ``quality_metrics`` (matching pre-fix behavior) and is
+    surfaced via a warning so the dict can be kept in sync with SI's registries.
     """
+    import warnings
+
     import pandas as pd
     from spikeinterface.core.sortinganalyzer import get_extension_class
 
@@ -1325,13 +1425,38 @@ def _load_unit_metrics(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
                     break
             if matched:
                 continue
-            # Fallback: plain VectorData column. Route to quality_metrics by
-            # convention, using the column name as the SI metric name.
-            per_extension_columns.setdefault("quality_metrics", {})[col_name] = np.asarray(col.data[:])
+            # Route plain VectorData columns by name via COLUMN_TO_EXTENSION.
+            # Replicate into every target extension when the column belongs to
+            # more than one (the SI extension-aliasing case).
+            targets = COLUMN_TO_EXTENSION.get(col_name)
+            if targets is None:
+                warnings.warn(
+                    f"Column {col_name!r} on UnitMetrics is not in "
+                    "COLUMN_TO_EXTENSION; routing to quality_metrics by default. "
+                    "Update the dict in utils.py to silence this warning.",
+                    stacklevel=2,
+                )
+                targets = ("quality_metrics",)
+            values = np.asarray(col.data[:])
+            for si_ext_name in targets:
+                per_extension_columns.setdefault(si_ext_name, {})[col_name] = values
 
         for si_ext_name, columns_dict in per_extension_columns.items():
             ext_class = get_extension_class(si_ext_name)
             if ext_class is None:
+                continue
+            existing = sorting_analyzer.extensions.get(si_ext_name)
+            if existing is not None and existing.data.get("metrics") is not None:
+                # Merge into an extension already populated by an earlier loader
+                # step. Preserve existing metric_names; append new ones.
+                existing_df = existing.data["metrics"]
+                for col_name_inner, values in columns_dict.items():
+                    existing_df[col_name_inner] = values
+                metric_names = existing.params.setdefault("metric_names", [])
+                for n in columns_dict:
+                    if n not in metric_names:
+                        metric_names.append(n)
+                existing.params["metrics_to_compute"] = list(metric_names)
                 continue
             metrics_df = pd.DataFrame(columns_dict, index=unit_ids)
             params = per_extension_params.get(si_ext_name, {})
