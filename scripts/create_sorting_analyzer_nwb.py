@@ -11,10 +11,8 @@ This script demonstrates how to:
 from datetime import datetime, timezone
 from pathlib import Path
 
-import numpy as np
 from neuroconv.tools.spikeinterface import add_recording_to_nwbfile, add_sorting_to_nwbfile
 from pynwb import NWBHDF5IO, NWBFile
-from spikeinterface.core.base import unit_period_dtype
 from spikeinterface import create_sorting_analyzer, generate_ground_truth_recording, set_global_job_kwargs
 
 from ndx_spikesorting.utils import add_sorting_analyzer_to_nwbfile
@@ -53,35 +51,6 @@ sorting_analyzer.compute(
         "amplitude_scalings": {},
         "spike_locations": {"method": "grid_convolution"},
     }
-)
-
-# Create user-defined valid periods for each unit
-# Each unit gets two disjoint valid periods
-num_units = len(sorting.unit_ids)
-sampling_frequency = recording.sampling_frequency
-user_defined_periods = np.array([], dtype=unit_period_dtype)
-for unit_index in range(num_units):
-    # First valid period: 0.5s–2s
-    user_defined_periods = np.append(
-        user_defined_periods,
-        np.array(
-            [(0, int(0.5 * sampling_frequency), int(2.0 * sampling_frequency), unit_index)],
-            dtype=unit_period_dtype)
-        )
-    # Second valid period: 3s–4.5s
-    user_defined_periods = np.append(
-        user_defined_periods,
-        np.array(
-            [(0, int(3.0 * sampling_frequency), int(4.5 * sampling_frequency), unit_index)],
-            dtype=unit_period_dtype
-        )
-    )
-
-sorting_analyzer.compute(
-    "valid_unit_periods",
-    method="user_defined",
-    user_defined_periods=user_defined_periods,
-    minimum_valid_period_duration=0,
 )
 
 # ---- Step 2: Create the base NWB file with recording and sorting via neuroconv ----

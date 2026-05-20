@@ -549,30 +549,6 @@ def main():
         ],
     )
 
-    # ValidUnitPeriods: valid time periods for each unit using TimeIntervals
-    valid_unit_periods = NWBGroupSpec(
-        neurodata_type_def="ValidUnitPeriods",
-        neurodata_type_inc="TimeIntervals",
-        default_name="valid_unit_periods",
-        doc=(
-            "Valid time periods for each unit, typically computed from false positive/negative "
-            "rate estimation or user-defined. Each row represents one valid period "
-            "for one unit, with start and stop times inherited from TimeIntervals. "
-            "If a unit has multiple disjoint valid periods, each period is stored as a "
-            "separate row referencing the same unit."
-        ),
-        datasets=[
-            NWBDatasetSpec(
-                name="unit",
-                neurodata_type_inc="DynamicTableRegion",
-                doc=(
-                    "Reference to the units table for each row, identifying which unit "
-                    "each valid period belongs to."
-                ),
-            ),
-        ],
-    )
-
     # SpikeSortingExtensions: container group for all computed extensions
     spike_sorting_extensions = NWBGroupSpec(
         neurodata_type_def="SpikeSortingExtensions",
@@ -647,11 +623,6 @@ def main():
                 neurodata_type_inc="PCAProjectionsConcatenated",
                 quantity="?",
                 doc="Concatenated-channels PCA projections of spikes (single-ragged).",
-            ),
-            NWBGroupSpec(
-                neurodata_type_inc="ValidUnitPeriods",
-                quantity="?",
-                doc="Valid unit periods extension data.",
             ),
         ],
     )
@@ -736,7 +707,6 @@ def main():
         amplitude_scalings,
         pca_projections_by_channel,
         pca_projections_concatenated,
-        valid_unit_periods,
         spike_sorting_extensions,
         spike_sorting_container,
     ]

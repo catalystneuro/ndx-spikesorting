@@ -26,7 +26,6 @@ from ndx_spikesorting import (
     AmplitudeScalings,
     PCAProjectionsByChannel,
     PCAProjectionsConcatenated,
-    ValidUnitPeriods,
     SpikeSortingExtensions,
     SpikeSortingContainer,
 )
@@ -299,47 +298,6 @@ def _convert_spike_vector_extension(
     return nwb_class(name=extension_name, data=data, data_index=data_index)
 
 
-def _convert_valid_unit_periods(
-    sorting_analyzer: "SortingAnalyzer",
-    extension_name: str,
-    nwb_class: type,
-    units_table: DynamicTableRegion = None,
-) -> ValidUnitPeriods:
-    ext = sorting_analyzer.get_extension("valid_unit_periods")
-    valid_periods_data = ext.get_data(outputs="numpy")
-    sampling_frequency = sorting_analyzer.sampling_frequency
-
-    start_times = []
-    stop_times = []
-    unit_indices = []
-
-    for period in valid_periods_data:
-        start_times.append(float(period["start_sample_index"]) / sampling_frequency)
-        stop_times.append(float(period["end_sample_index"]) / sampling_frequency)
-        unit_indices.append(int(period["unit_index"]))
-
-    vup_unit_column = DynamicTableRegion(
-        name="unit",
-        data=unit_indices,
-        description="Reference to units table for each valid period.",
-        table=units_table,
-    )
-
-    return nwb_class(
-        name=extension_name,
-        description="Valid time periods per unit from spike sorting quality estimation.",
-        columns=[
-            VectorData(
-                name="start_time", data=start_times, description="Start time of each valid period in seconds."
-            ),
-            VectorData(
-                name="stop_time", data=stop_times, description="Stop time of each valid period in seconds."
-            ),
-            vup_unit_column,
-        ],
-    )
-
-
 def _convert_pca_by_channel(
     sorting_analyzer: "SortingAnalyzer",
     nwbfile: NWBFile,
@@ -515,10 +473,6 @@ def _convert_all_extensions(sorting_analyzer, nwbfile):  # noqa: C901
         if "waveforms" not in converted:
             raise ValueError("PCA projections require waveforms to be computed.")
         converted.update(_convert_pca(sorting_analyzer, nwbfile, converted["waveforms"]))
-    if _has("valid_unit_periods"):
-        converted["valid_unit_periods"] = _convert_valid_unit_periods(
-            sorting_analyzer, "valid_unit_periods", ValidUnitPeriods, nwbfile.units
-        )
 
     return converted
 
@@ -735,7 +689,6 @@ def read_sorting_analyzer_from_nwb(
             _load_amplitude_scalings(extensions, sorting_analyzer)
             _load_spike_locations(extensions, sorting_analyzer)
             _load_pca_projections(extensions, sorting_analyzer)
-            _load_valid_unit_periods_from_nwb(extensions, sorting_analyzer)
 
     return sorting_analyzer
 
@@ -1020,50 +973,6 @@ def _load_amplitude_scalings(extensions, sorting_analyzer: "SortingAnalyzer") ->
     ext.data["amplitude_scalings"] = amplitude_scalings_nwb.data[:][reverse_order].astype(np.float32)
     ext.run_info = {"run_completed": True, "runtime_s": 0.0}
     sorting_analyzer.extensions["amplitude_scalings"] = ext
-
-
-def _load_valid_unit_periods_from_nwb(extensions, sorting_analyzer):
-    """Instantiate the valid_unit_periods extension if present in the NWB container.
-
-    **NWB** stores valid unit periods as a ``TimeIntervals`` table with columns:
-    - ``start_time``: start of each valid period in seconds
-    - ``stop_time``: end of each valid period in seconds
-    - ``unit``: DynamicTableRegion referencing the units table
-
-    **SpikeInterface** stores valid unit periods as a structured numpy array
-    with dtype ``unit_period_dtype``:
-    ``(segment_index, start_sample_index, end_sample_index, unit_index)``
-    in sample indices.
-
-    The conversion multiplies times by sampling frequency to get sample indices.
-    Since NWB TimeIntervals does not store segment_index, we assume segment 0.
-    """
-    from spikeinterface.core.base import unit_period_dtype
-    from spikeinterface.core.sortinganalyzer import get_extension_class
-
-    valid_periods_nwb = getattr(extensions, "valid_unit_periods", None)
-    if valid_periods_nwb is None:
-        return
-
-    start_times = np.array(valid_periods_nwb["start_time"][:], dtype=np.float64)
-    stop_times = np.array(valid_periods_nwb["stop_time"][:], dtype=np.float64)
-    unit_indices = np.array(valid_periods_nwb["unit"].data[:], dtype=np.int64)
-
-    sampling_frequency = sorting_analyzer.sampling_frequency
-    n_periods = len(start_times)
-
-    valid_periods = np.zeros(n_periods, dtype=unit_period_dtype)
-    valid_periods["segment_index"] = 0
-    valid_periods["start_sample_index"] = np.round(start_times * sampling_frequency).astype(np.int64)
-    valid_periods["end_sample_index"] = np.round(stop_times * sampling_frequency).astype(np.int64)
-    valid_periods["unit_index"] = unit_indices
-
-    ext_class = get_extension_class("valid_unit_periods")
-    ext = ext_class(sorting_analyzer)
-    ext.set_params(method="user_defined", user_defined_periods=valid_periods, minimum_valid_period_duration=0)
-    ext.data["valid_unit_periods"] = valid_periods
-    ext.run_info = {"run_completed": True, "runtime_s": 0.0}
-    sorting_analyzer.extensions["valid_unit_periods"] = ext
 
 
 def _load_pca_projections(extensions, sorting_analyzer: "SortingAnalyzer") -> None:

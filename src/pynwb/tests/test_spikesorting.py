@@ -23,7 +23,6 @@ from ndx_spikesorting import (
     SpikeLocations,
     PCAProjectionsByChannel,
     PCAProjectionsConcatenated,
-    ValidUnitPeriods,
     SpikeSortingExtensions,
     SpikeSortingContainer,
 )
@@ -1365,114 +1364,6 @@ class TestAmplitudeScalingsRoundtrip(TestCase):
             np.testing.assert_array_equal(
                 read_amplitude_scalings.data_index.data[:],
                 amplitude_scalings.data_index.data[:],
-            )
-
-
-def create_mock_valid_unit_periods(nwbfile: NWBFile, num_units: int = 3, periods_per_unit: int = 2):
-    """Create mock ValidUnitPeriods with time intervals for each unit."""
-    start_times = []
-    stop_times = []
-    unit_indices = []
-
-    for unit_idx in range(num_units):
-        for p in range(periods_per_unit):
-            start = unit_idx * 10.0 + p * 3.0
-            stop = start + 2.0
-            start_times.append(start)
-            stop_times.append(stop)
-            unit_indices.append(unit_idx)
-
-    units = DynamicTableRegion(
-        name="unit",
-        data=unit_indices,
-        description="Reference to units table for each valid period.",
-        table=nwbfile.units,
-    )
-
-    valid_unit_periods = ValidUnitPeriods(
-        name="valid_unit_periods",
-        description="Valid periods for each unit.",
-        columns=[
-            VectorData(name="start_time", data=start_times, description="Start time of each valid period."),
-            VectorData(name="stop_time", data=stop_times, description="Stop time of each valid period."),
-            units,
-        ],
-    )
-    return valid_unit_periods
-
-
-class TestValidUnitPeriodsConstructor(TestCase):
-    """Unit tests for ValidUnitPeriods constructor."""
-
-    def test_constructor(self):
-        """Test that ValidUnitPeriods constructor sets values correctly."""
-        nwbfile = set_up_nwbfile()
-        valid_periods = create_mock_valid_unit_periods(nwbfile)
-
-        self.assertEqual(valid_periods.name, "valid_unit_periods")
-        # 3 units * 2 periods each = 6 rows
-        self.assertEqual(len(valid_periods["start_time"].data), 6)
-        self.assertEqual(len(valid_periods["stop_time"].data), 6)
-        self.assertEqual(len(valid_periods["unit"].data), 6)
-
-
-class TestValidUnitPeriodsRoundtrip(TestCase):
-    """Roundtrip test for ValidUnitPeriods."""
-
-    def setUp(self):
-        self.nwbfile = set_up_nwbfile()
-        self.path = "test_valid_unit_periods.nwb"
-
-    def tearDown(self):
-        remove_test_file(self.path)
-
-    def test_roundtrip(self):
-        """Test writing and reading ValidUnitPeriods."""
-        electrodes_region = self.nwbfile.create_electrode_table_region(
-            region=list(range(10)),
-            description="all electrodes",
-        )
-        units_region = create_units_region(self.nwbfile)
-
-        valid_periods = create_mock_valid_unit_periods(self.nwbfile)
-
-        extensions = SpikeSortingExtensions(name="extensions")
-        extensions.valid_unit_periods = valid_periods
-
-        container = SpikeSortingContainer(
-            name="spike_sorting",
-            sampling_frequency=30000.0,
-            electrodes=electrodes_region,
-            units_region=units_region,
-        )
-        container.spike_sorting_extensions = extensions
-
-        ecephys_module = self.nwbfile.create_processing_module(
-            name="ecephys",
-            description="Extracellular electrophysiology processing",
-        )
-        ecephys_module.add(container)
-
-        with NWBHDF5IO(self.path, mode="w") as io:
-            io.write(self.nwbfile)
-
-        with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
-            read_nwbfile = io.read()
-            read_container = read_nwbfile.processing["ecephys"]["spike_sorting"]
-            read_extensions = read_container.spike_sorting_extensions
-            read_valid_periods = read_extensions.valid_unit_periods
-
-            np.testing.assert_array_almost_equal(
-                read_valid_periods["start_time"][:],
-                valid_periods["start_time"].data,
-            )
-            np.testing.assert_array_almost_equal(
-                read_valid_periods["stop_time"][:],
-                valid_periods["stop_time"].data,
-            )
-            np.testing.assert_array_equal(
-                read_valid_periods["unit"].data[:],
-                valid_periods["unit"].data,
             )
 
 
