@@ -604,22 +604,26 @@ def main():
                 ),
             ),
             NWBDatasetSpec(
-                name="obs_intervals",
+                name="computation_intervals",
                 neurodata_type_inc="VectorData",
                 dtype="float",
                 dims=["num_intervals", "start_end"],
                 shape=[None, 2],
                 doc=(
-                    "Per-unit observation intervals (start, stop) in seconds over which "
-                    "this row's metric values were computed. Ragged by row via "
-                    "obs_intervals_index."
+                    "Per-unit time intervals (start, stop) in seconds over which this "
+                    "row's metric values were computed. Captures the `periods` argument "
+                    "passed to the SpikeInterface metric extension at compute time. "
+                    "Ragged by row via computation_intervals_index. Distinct from "
+                    "`Units.obs_intervals` (NWB-core), which constrains the validity of "
+                    "`spike_times` on the Units table; this column records the analysis-time "
+                    "windows used as input to this row's computation."
                 ),
                 quantity="?",
             ),
             NWBDatasetSpec(
-                name="obs_intervals_index",
+                name="computation_intervals_index",
                 neurodata_type_inc="VectorIndex",
-                doc="Index column for the ragged obs_intervals column.",
+                doc="Index column for the ragged computation_intervals column.",
                 quantity="?",
             ),
         ],
