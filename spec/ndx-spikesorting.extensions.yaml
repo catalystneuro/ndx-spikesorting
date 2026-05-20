@@ -384,6 +384,22 @@ groups:
     neurodata_type_inc: DynamicTableRegion
     doc: Reference to the row in nwbfile.units that each row of this UnitMetrics
       describes.
+  - name: obs_intervals
+    neurodata_type_inc: VectorData
+    dtype: float
+    dims:
+    - num_intervals
+    - start_end
+    shape:
+    - null
+    - 2
+    doc: Per-unit observation intervals (start, stop) in seconds over which this
+      row's metric values were computed. Ragged by row via obs_intervals_index.
+    quantity: '?'
+  - name: obs_intervals_index
+    neurodata_type_inc: VectorIndex
+    doc: Index column for the ragged obs_intervals column.
+    quantity: '?'
 - neurodata_type_def: ValidUnitPeriods
   neurodata_type_inc: TimeIntervals
   default_name: valid_unit_periods

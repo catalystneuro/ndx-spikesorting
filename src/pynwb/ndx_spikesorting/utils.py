@@ -366,7 +366,9 @@ def _convert_unit_metrics(
 
     Each row of the table references one unit (via the ``unit``
     ``DynamicTableRegion``) and carries that unit's run-dependent metric values
-    as typed columns. Returns ``None`` when ``quality_metrics`` is not computed.
+    as typed columns. If ``valid_unit_periods`` is also computed, the per-unit
+    valid windows are written as ``obs_intervals`` on the table. Returns
+    ``None`` when ``quality_metrics`` is not computed.
     """
     qm_ext = sorting_analyzer.get_extension("quality_metrics")
     if qm_ext is None:
@@ -413,6 +415,44 @@ def _convert_unit_metrics(
                 description=f"Run-dependent metric: {col_name}.",
             )
         )
+
+    vup_ext = sorting_analyzer.get_extension("valid_unit_periods")
+    if vup_ext is not None:
+        if sorting_analyzer.get_num_segments() > 1:
+            raise NotImplementedError(
+                "valid_unit_periods round-trip is single-segment only; "
+                "multi-segment support not yet implemented."
+            )
+        sampling_frequency = sorting_analyzer.sampling_frequency
+        valid_periods_data = vup_ext.get_data(outputs="numpy")
+        per_unit_windows: list[list[tuple[float, float]]] = [[] for _ in range(n_units)]
+        for period in valid_periods_data:
+            unit_index = int(period["unit_index"])
+            start_s = float(period["start_sample_index"]) / sampling_frequency
+            stop_s = float(period["end_sample_index"]) / sampling_frequency
+            per_unit_windows[unit_index].append((start_s, stop_s))
+
+        flat_intervals: list[list[float]] = []
+        cumulative = []
+        running = 0
+        for windows in per_unit_windows:
+            for start_s, stop_s in windows:
+                flat_intervals.append([start_s, stop_s])
+            running += len(windows)
+            cumulative.append(running)
+
+        obs_intervals_vd = VectorData(
+            name="obs_intervals",
+            data=np.array(flat_intervals, dtype=np.float64) if flat_intervals else np.zeros((0, 2)),
+            description="Per-unit observation intervals (start, stop) in seconds.",
+        )
+        obs_intervals_index = VectorIndex(
+            name="obs_intervals_index",
+            data=np.array(cumulative, dtype=np.int64),
+            target=obs_intervals_vd,
+        )
+        columns.append(obs_intervals_vd)
+        columns.append(obs_intervals_index)
 
     return UnitMetrics(
         name="quality_metrics",
@@ -1268,7 +1308,7 @@ def _load_unit_metrics(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
         per_extension_params: dict[str, dict] = {}
 
         for col_name in nwb_table.colnames:
-            if col_name == "unit":
+            if col_name in ("unit", "obs_intervals", "obs_intervals_index"):
                 continue
             col = nwb_table[col_name]
             # First try the typed-column registry (empty in v1; kept for forward

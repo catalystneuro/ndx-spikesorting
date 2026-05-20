@@ -603,6 +603,25 @@ def main():
                     "UnitMetrics describes."
                 ),
             ),
+            NWBDatasetSpec(
+                name="obs_intervals",
+                neurodata_type_inc="VectorData",
+                dtype="float",
+                dims=["num_intervals", "start_end"],
+                shape=[None, 2],
+                doc=(
+                    "Per-unit observation intervals (start, stop) in seconds over which "
+                    "this row's metric values were computed. Ragged by row via "
+                    "obs_intervals_index."
+                ),
+                quantity="?",
+            ),
+            NWBDatasetSpec(
+                name="obs_intervals_index",
+                neurodata_type_inc="VectorIndex",
+                doc="Index column for the ragged obs_intervals column.",
+                quantity="?",
+            ),
         ],
     )
 
