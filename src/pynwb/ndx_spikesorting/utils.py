@@ -28,32 +28,22 @@ from ndx_spikesorting import (
     PCAProjectionsConcatenated,
     FiringRate,
     UnitMetrics,
+    ValidUnitPeriods,
     SpikeSortingExtensions,
     SpikeSortingContainer,
 )
 
-# ---------------------------------------------------------------------------
-# Canonical column registry
-# ---------------------------------------------------------------------------
-# Maps each typed VectorData column class to:
-#   - the SI metric column name it represents (the DataFrame column key)
-#   - the SI extension name it should be routed to on read
-#   - which side of the cell-vs-algorithm split it lives on
-#
-# This mapping is the single point of SI knowledge in the loader; the spec
-# itself stays tool-agnostic.
+# Registries mapping canonical typed VectorData classes to
+# (si_metric_name, si_extension_name). The writer uses col_cls=<class> when
+# adding a column whose class appears here; other columns are written as plain
+# VectorData with the name preserved. The registries are the single point of
+# SpikeInterface-specific knowledge in the loader; the spec stays tool-agnostic.
 
-# Mapping from canonical typed column class -> (si_metric_name, si_extension_name).
-# The writer routes SI's DataFrame columns to typed columns when the class is
-# registered here; otherwise the column is written as plain VectorData.
-CELL_INTRINSIC_COLUMNS = {
+UNITS_TYPED_COLUMNS = {
     FiringRate: ("firing_rate", "spiketrain_metrics"),
 }
 
-# No typed column classes are registered yet for the run-dependent side;
-# run-dependent metrics flow as plain VectorData columns onto UnitMetrics
-# instances. The registry is kept for forward compatibility.
-RUN_DEPENDENT_COLUMNS: dict = {}
+UNIT_METRICS_TYPED_COLUMNS: dict = {}
 
 
 def templates_to_dense(templates: Templates, num_channels: int) -> np.ndarray:
@@ -351,7 +341,7 @@ def _add_cell_intrinsic_columns_to_units(
 
     # Cache SI extension DataFrames by name so we only pull each once.
     si_extension_data: dict[str, "pd.DataFrame"] = {}
-    for col_cls, (si_name, si_ext_name) in CELL_INTRINSIC_COLUMNS.items():
+    for col_cls, (si_name, si_ext_name) in UNITS_TYPED_COLUMNS.items():
         if si_ext_name not in si_extension_data:
             ext = sorting_analyzer.get_extension(si_ext_name)
             si_extension_data[si_ext_name] = ext.get_data() if ext is not None else None
@@ -377,7 +367,7 @@ def _convert_unit_metrics(
     Each row of the table references one unit (via the ``unit``
     ``DynamicTableRegion``) and carries that unit's run-dependent metric values
     as typed columns. If ``valid_unit_periods`` is also computed, the per-unit
-    valid windows are written as ``valid_intervals`` on the table. Returns
+    valid windows are written as ``obs_intervals`` on the table. Returns
     ``None`` when ``quality_metrics`` is not computed.
     """
     qm_ext = sorting_analyzer.get_extension("quality_metrics")
@@ -403,7 +393,7 @@ def _convert_unit_metrics(
     # empty (no run-dependent typed columns committed in v1), but keeps the
     # design open for adding typed columns in a later version.
     typed_column_names: set[str] = set()
-    for col_cls, (si_name, _) in RUN_DEPENDENT_COLUMNS.items():
+    for col_cls, (si_name, _) in UNIT_METRICS_TYPED_COLUMNS.items():
         if si_name not in df.columns:
             continue
         col_kwargs = _build_column_kwargs(col_cls, si_name, df[si_name].to_numpy(), qm_params)
@@ -427,7 +417,7 @@ def _convert_unit_metrics(
         )
 
     # If valid_unit_periods is computed, store the per-unit windows as
-    # valid_intervals on this UnitMetrics instance. valid_intervals is ragged by row
+    # obs_intervals on this UnitMetrics instance. obs_intervals is ragged by row
     # (one row per unit), each cell holds the list of (start, stop) windows
     # used to restrict that unit's metric computation.
     vup_ext = sorting_analyzer.get_extension("valid_unit_periods")
@@ -455,18 +445,18 @@ def _convert_unit_metrics(
             running += len(windows)
             cumulative.append(running)
 
-        valid_intervals_vd = VectorData(
-            name="valid_intervals",
+        obs_intervals_vd = VectorData(
+            name="obs_intervals",
             data=np.array(flat_intervals, dtype=np.float64) if flat_intervals else np.zeros((0, 2)),
             description="Per-unit observation intervals (start, stop) in seconds.",
         )
-        valid_intervals_index = VectorIndex(
-            name="valid_intervals_index",
+        obs_intervals_index = VectorIndex(
+            name="obs_intervals_index",
             data=np.array(cumulative, dtype=np.int64),
-            target=valid_intervals_vd,
+            target=obs_intervals_vd,
         )
-        columns.append(valid_intervals_vd)
-        columns.append(valid_intervals_index)
+        columns.append(obs_intervals_vd)
+        columns.append(obs_intervals_index)
 
     return UnitMetrics(
         name="quality_metrics",
@@ -1203,7 +1193,7 @@ def _load_cell_intrinsic_from_units(units_table, sorting_analyzer: "SortingAnaly
 
     Walks the Units table columns, finds those that are instances of canonical
     typed VectorData classes, and populates the corresponding SI extension
-    DataFrames. Routes by column class via ``CELL_INTRINSIC_COLUMNS``.
+    DataFrames. Routes by column class via ``UNITS_TYPED_COLUMNS``.
 
     When a target SI extension was already populated by ``_load_unit_metrics``
     (e.g. quality_metrics receives both ``Snr`` from a UnitMetrics and
@@ -1216,7 +1206,7 @@ def _load_cell_intrinsic_from_units(units_table, sorting_analyzer: "SortingAnaly
     per_extension_columns: dict[str, dict[str, np.ndarray]] = {}
     for col_name in units_table.colnames:
         col = units_table[col_name]
-        for col_cls, (si_name, si_ext_name) in CELL_INTRINSIC_COLUMNS.items():
+        for col_cls, (si_name, si_ext_name) in UNITS_TYPED_COLUMNS.items():
             if isinstance(col, col_cls):
                 per_extension_columns.setdefault(si_ext_name, {})[si_name] = np.asarray(col.data[:])
                 break
@@ -1258,7 +1248,7 @@ def _load_unit_metrics(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
     ``valid_unit_periods`` extensions.
 
     Each UnitMetrics is a curation run; its typed columns populate
-    ``quality_metrics``, and its ``valid_intervals`` (if present) populate
+    ``quality_metrics``, and its ``obs_intervals`` (if present) populate
     ``valid_unit_periods``. For v1 we expect at most one UnitMetrics per file
     and route it directly. Multi-run support (each run distinguished by name
     or parameter context) is a follow-up.
@@ -1279,13 +1269,13 @@ def _load_unit_metrics(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
         per_extension_params: dict[str, dict] = {}
 
         for col_name in nwb_table.colnames:
-            if col_name in ("unit", "valid_intervals", "valid_intervals_index"):
+            if col_name in ("unit", "obs_intervals", "obs_intervals_index"):
                 continue
             col = nwb_table[col_name]
             # First try the typed-column registry (empty in v1; kept for forward
             # compatibility when run-dependent typed columns are added).
             matched = False
-            for col_cls, (si_name, si_ext_name) in RUN_DEPENDENT_COLUMNS.items():
+            for col_cls, (si_name, si_ext_name) in UNIT_METRICS_TYPED_COLUMNS.items():
                 if isinstance(col, col_cls):
                     per_extension_columns.setdefault(si_ext_name, {})[si_name] = np.asarray(col.data[:])
                     matched = True
@@ -1313,14 +1303,14 @@ def _load_unit_metrics(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
             ext.run_info = {"run_completed": True, "runtime_s": 0.0}
             sorting_analyzer.extensions[si_ext_name] = ext
 
-        # Reconstruct valid_unit_periods from valid_intervals if present.
-        if "valid_intervals" in nwb_table.colnames:
-            # nwb_table["valid_intervals"] returns the VectorIndex (the
+        # Reconstruct valid_unit_periods from obs_intervals if present.
+        if "obs_intervals" in nwb_table.colnames:
+            # nwb_table["obs_intervals"] returns the VectorIndex (the
             # per-row cumulative boundaries); its .target is the underlying
             # VectorData with the flat (total_intervals, 2) array.
-            valid_intervals_vi = nwb_table["valid_intervals"]
-            cum = np.asarray(valid_intervals_vi.data[:])
-            flat = np.asarray(valid_intervals_vi.target.data[:])
+            obs_intervals_vi = nwb_table["obs_intervals"]
+            cum = np.asarray(obs_intervals_vi.data[:])
+            flat = np.asarray(obs_intervals_vi.target.data[:])
             sampling_frequency = sorting_analyzer.sampling_frequency
 
             periods_list = []

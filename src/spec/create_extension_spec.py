@@ -596,20 +596,19 @@ def main():
     # Background: see `canonical_unit_columns.md` in the project vault.
 
     # ------------------------------------------------------------------
-    # UnitMetrics: multi-instance container for run-dependent metrics
-    # ------------------------------------------------------------------
+    # UnitMetrics: multi-instance container for per-unit metrics from one
+    # analysis run. Required `unit` DynamicTableRegion makes the row-to-unit
+    # mapping explicit. Multiple instances coexist under SpikeSortingExtensions
+    # so multiple runs (with different parameters) can be stored in one file.
     unit_metrics = NWBGroupSpec(
         neurodata_type_def="UnitMetrics",
         neurodata_type_inc="DynamicTable",
         default_name="unit_metrics",
         doc=(
-            "One analysis run's worth of per-unit run-dependent metrics. Each row "
-            "is one unit; columns are run-dependent metric values stored as "
-            "plain VectorData (no canonical types committed in v1). "
-            "Multiple UnitMetrics instances coexist under SpikeSortingExtensions for "
-            "multiple curation runs (default run, valid-window-restricted run, "
-            "per-period drift QC runs). The instance name carries the run identity "
-            "(e.g., 'quality_metrics_default', 'quality_metrics_valid_windows')."
+            "Per-unit metric values from one analysis run. Each row is one unit; "
+            "columns are metric values. The required `unit` DynamicTableRegion "
+            "references the corresponding row in nwbfile.units. Multiple instances "
+            "coexist under SpikeSortingExtensions for different analysis runs."
         ),
         datasets=[
             NWBDatasetSpec(
@@ -617,28 +616,35 @@ def main():
                 neurodata_type_inc="DynamicTableRegion",
                 doc=(
                     "Reference to the row in nwbfile.units that each row of this "
-                    "UnitMetrics describes. Makes row-to-unit alignment explicit."
+                    "UnitMetrics describes."
                 ),
             ),
+        ],
+    )
+
+    # ValidUnitPeriods: valid time periods for each unit using TimeIntervals.
+    # Carried over from PR #17. A follow-up PR may migrate per-unit valid
+    # windows to NWB-core Units.obs_intervals and deprecate this type; that
+    # change is scoped separately to keep the present PR's diff small.
+    valid_unit_periods = NWBGroupSpec(
+        neurodata_type_def="ValidUnitPeriods",
+        neurodata_type_inc="TimeIntervals",
+        default_name="valid_unit_periods",
+        doc=(
+            "Valid time periods for each unit, typically computed from false positive/negative "
+            "rate estimation or user-defined. Each row represents one valid period "
+            "for one unit, with start and stop times inherited from TimeIntervals. "
+            "If a unit has multiple disjoint valid periods, each period is stored as a "
+            "separate row referencing the same unit."
+        ),
+        datasets=[
             NWBDatasetSpec(
-                name="valid_intervals",
-                neurodata_type_inc="VectorData",
-                dtype="float",
-                dims=["num_intervals", "start|end"],
-                shape=[None, 2],
-                quantity="?",
+                name="unit",
+                neurodata_type_inc="DynamicTableRegion",
                 doc=(
-                    "Per-unit observation intervals (start, stop) pairs in seconds, "
-                    "describing the time windows over which metrics in this run were "
-                    "computed. If absent, the metrics were computed over the whole "
-                    "recording."
+                    "Reference to the units table for each row, identifying which unit "
+                    "each valid period belongs to."
                 ),
-            ),
-            NWBDatasetSpec(
-                name="valid_intervals_index",
-                neurodata_type_inc="VectorIndex",
-                quantity="?",
-                doc="Index into valid_intervals for each row, grouping intervals by row.",
             ),
         ],
     )
@@ -722,9 +728,14 @@ def main():
                 neurodata_type_inc="UnitMetrics",
                 quantity="*",
                 doc=(
-                    "Run-dependent per-unit metrics, one instance per analysis run. "
-                    "Multiple instances coexist for different curation runs."
+                    "Per-unit metrics from one analysis run. Multiple instances "
+                    "coexist for different runs (different parameter sets)."
                 ),
+            ),
+            NWBGroupSpec(
+                neurodata_type_inc="ValidUnitPeriods",
+                quantity="?",
+                doc="Valid unit periods extension data.",
             ),
         ],
     )
@@ -809,15 +820,9 @@ def main():
         amplitude_scalings,
         pca_projections_by_channel,
         pca_projections_concatenated,
-        # Canonical typed VectorData columns (cell-intrinsic, live on nwbfile.units)
         firing_rate,
-        # No canonical typed VectorData columns are committed for the
-        # run-dependent side in v1. Run-dependent metrics still flow into
-        # UnitMetrics instances as plain VectorData columns; the field has
-        # not converged on canonical conventions yet (see vault note
-        # canonical_unit_columns.md). Add typed columns here in v2.
-        # Multi-instance container for run-dependent metrics
         unit_metrics,
+        valid_unit_periods,
         spike_sorting_extensions,
         spike_sorting_container,
     ]

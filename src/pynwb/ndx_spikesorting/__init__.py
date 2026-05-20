@@ -34,6 +34,8 @@ FiringRate = get_class("FiringRate", "ndx-spikesorting")
 # Multi-instance container for run-dependent metrics
 UnitMetrics = get_class("UnitMetrics", "ndx-spikesorting")
 
+ValidUnitPeriods = get_class("ValidUnitPeriods", "ndx-spikesorting")
+
 SpikeSortingExtensions = get_class("SpikeSortingExtensions", "ndx-spikesorting")
 SpikeSortingContainer = get_class("SpikeSortingContainer", "ndx-spikesorting")
 
@@ -55,6 +57,7 @@ __all__ = [
     "PCAProjectionsConcatenated",
     "FiringRate",
     "UnitMetrics",
+    "ValidUnitPeriods",
     "SpikeSortingExtensions",
     "SpikeSortingContainer",
     "templates_to_dense",

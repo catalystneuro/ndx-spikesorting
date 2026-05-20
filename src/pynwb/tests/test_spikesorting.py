@@ -1368,14 +1368,14 @@ class TestAmplitudeScalingsRoundtrip(TestCase):
             )
 
 
-def create_mock_unit_metrics(nwbfile: NWBFile, num_units: int = 3, with_valid_intervals: bool = True):
+def create_mock_unit_metrics(nwbfile: NWBFile, num_units: int = 3, with_obs_intervals: bool = True):
     """Create a mock UnitMetrics with plain (untyped) VectorData metric columns.
 
     In v1 no run-dependent metric is canonized as a typed column type (each
     candidate needs multiple attributes to capture cross-pipeline variability;
     see canonical_unit_columns.md in the vault). Columns are stored as plain
     VectorData with their SI metric names preserved. Optionally adds a ragged
-    valid_intervals column with two windows per unit.
+    obs_intervals column with two windows per unit.
     """
     unit_column = DynamicTableRegion(
         name="unit",
@@ -1407,7 +1407,7 @@ def create_mock_unit_metrics(nwbfile: NWBFile, num_units: int = 3, with_valid_in
         ),
     ]
 
-    if with_valid_intervals:
+    if with_obs_intervals:
         # Two disjoint windows per unit
         flat = []
         cumulative = []
@@ -1418,18 +1418,18 @@ def create_mock_unit_metrics(nwbfile: NWBFile, num_units: int = 3, with_valid_in
             running += 2
             cumulative.append(running)
 
-        valid_intervals_vd = VectorData(
-            name="valid_intervals",
+        obs_intervals_vd = VectorData(
+            name="obs_intervals",
             data=np.array(flat, dtype=np.float64),
             description="Per-unit observation intervals (start, stop) in seconds.",
         )
-        valid_intervals_idx = VectorIndex(
-            name="valid_intervals_index",
+        obs_intervals_idx = VectorIndex(
+            name="obs_intervals_index",
             data=np.array(cumulative, dtype=np.int64),
-            target=valid_intervals_vd,
+            target=obs_intervals_vd,
         )
-        columns.append(valid_intervals_vd)
-        columns.append(valid_intervals_idx)
+        columns.append(obs_intervals_vd)
+        columns.append(obs_intervals_idx)
 
     return UnitMetrics(
         name="quality_metrics",
@@ -1444,29 +1444,29 @@ class TestUnitMetricsConstructor(TestCase):
     def test_constructor_without_intervals(self):
         """UnitMetrics is constructed with typed metric columns."""
         nwbfile = set_up_nwbfile()
-        run = create_mock_unit_metrics(nwbfile, with_valid_intervals=False)
+        run = create_mock_unit_metrics(nwbfile, with_obs_intervals=False)
 
         self.assertEqual(run.name, "quality_metrics")
         self.assertIn("presence_ratio", run.colnames)
         self.assertIn("isi_violations_ratio", run.colnames)
         self.assertIn("unit", run.colnames)
-        self.assertNotIn("valid_intervals", run.colnames)
+        self.assertNotIn("obs_intervals", run.colnames)
         # 3 units => 3 rows
         self.assertEqual(len(run["presence_ratio"].data), 3)
 
     def test_constructor_with_intervals(self):
-        """UnitMetrics carries valid_intervals as a ragged column."""
+        """UnitMetrics carries obs_intervals as a ragged column."""
         nwbfile = set_up_nwbfile()
-        run = create_mock_unit_metrics(nwbfile, with_valid_intervals=True)
+        run = create_mock_unit_metrics(nwbfile, with_obs_intervals=True)
 
-        self.assertIn("valid_intervals", run.colnames)
+        self.assertIn("obs_intervals", run.colnames)
         # 3 units * 2 windows => 6 intervals in the flat data
-        self.assertEqual(run["valid_intervals"].target.data.shape, (6, 2))
+        self.assertEqual(run["obs_intervals"].target.data.shape, (6, 2))
 
     def test_plain_column_values(self):
         """UnitMetrics stores run-dependent metrics as plain VectorData (v1)."""
         nwbfile = set_up_nwbfile()
-        run = create_mock_unit_metrics(nwbfile, with_valid_intervals=False)
+        run = create_mock_unit_metrics(nwbfile, with_obs_intervals=False)
 
         # No typed-column attributes in v1; columns are plain VectorData.
         self.assertEqual(len(run["presence_ratio"].data), 3)
@@ -1492,7 +1492,7 @@ class TestUnitMetricsRoundtrip(TestCase):
         )
         units_region = create_units_region(self.nwbfile)
 
-        run = create_mock_unit_metrics(self.nwbfile, with_valid_intervals=True)
+        run = create_mock_unit_metrics(self.nwbfile, with_obs_intervals=True)
 
         extensions = SpikeSortingExtensions(name="extensions")
         extensions.add_unit_metrics(run)
@@ -1526,10 +1526,10 @@ class TestUnitMetricsRoundtrip(TestCase):
             np.testing.assert_array_almost_equal(
                 read_run["isi_violations_ratio"][:], run["isi_violations_ratio"].data
             )
-            # valid_intervals round-trip: VectorIndex view gives cumulative, target gives flat data
+            # obs_intervals round-trip: VectorIndex view gives cumulative, target gives flat data
             np.testing.assert_array_equal(
-                read_run["valid_intervals"].target.data[:],
-                run["valid_intervals"].target.data,
+                read_run["obs_intervals"].target.data[:],
+                run["obs_intervals"].target.data,
             )
 
 
