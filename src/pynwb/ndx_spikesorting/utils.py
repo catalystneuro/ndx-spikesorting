@@ -10,6 +10,7 @@ from pynwb import NWBFile
 from pynwb.ecephys import ElectricalSeries
 
 if TYPE_CHECKING:
+    import pandas as pd
     from spikeinterface.core import SortingAnalyzer
 
 from ndx_spikesorting import (
