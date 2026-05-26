@@ -163,7 +163,6 @@ classDiagram
         data_index : VectorIndex
         data_index_index : VectorIndex
         electrodes : DynamicTableRegion
-        random_spikes : RandomSpikes (link)
     }
 
     class Templates {
@@ -185,7 +184,7 @@ classDiagram
     class UnitLocations {
         <<NWBDataInterface>>
 
-        data : NDArray[Shape["num_units, {2|3}"], Float]
+        data : NDArray[Shape["num_units, 2_or_3"], Float]
         --> unit : str = "micrometers"
     }
 
@@ -219,7 +218,7 @@ classDiagram
     class SpikeLocations {
         <<NWBDataInterface>>
 
-        data : VectorData[NDArray[Shape["*, {2|3}"], Float]]
+        data : VectorData[NDArray[Shape["*, 2_or_3"], Float]]
         data_index : VectorIndex
     }
 
@@ -237,7 +236,6 @@ classDiagram
         data_index : VectorIndex
         data_index_index : VectorIndex
         electrodes : DynamicTableRegion
-        waveforms : Waveforms (link)
     }
 
     class PCAProjectionsConcatenated {
@@ -245,7 +243,6 @@ classDiagram
 
         data : VectorData[NDArray[Shape["*, num_components"], Float]]
         data_index : VectorIndex
-        waveforms : Waveforms (link)
     }
 
     class ValidUnitPeriods {
