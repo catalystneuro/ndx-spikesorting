@@ -1441,12 +1441,6 @@ def _load_unit_metrics(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
             for si_ext_name in targets:
                 per_extension_columns.setdefault(si_ext_name, {})[col_name] = values
 
-        # Reconstruct the structured `periods` array from the ragged
-        # (time_support, time_support_index) columns when present. The result
-        # is fed into quality_metrics.params["periods"] so SI sees the same
-        # per-unit windows the metric values were computed over.
-        qm_periods = _periods_from_time_support(nwb_table, sorting_analyzer, unit_period_dtype)
-
         for si_ext_name, columns_dict in per_extension_columns.items():
             ext_class = get_extension_class(si_ext_name)
             if ext_class is None:
@@ -1463,8 +1457,6 @@ def _load_unit_metrics(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
                     if n not in metric_names:
                         metric_names.append(n)
                 existing.params["metrics_to_compute"] = list(metric_names)
-                if qm_periods is not None and si_ext_name == "quality_metrics":
-                    existing.params["periods"] = qm_periods
                 continue
             metrics_df = pd.DataFrame(columns_dict, index=unit_ids)
             params = per_extension_params.get(si_ext_name, {})
@@ -1475,11 +1467,17 @@ def _load_unit_metrics(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
                 "metrics_to_compute": list(columns_dict.keys()),
                 "delete_existing_metrics": False,
             }
-            if qm_periods is not None and si_ext_name == "quality_metrics":
-                ext.params["periods"] = qm_periods
             ext.data["metrics"] = metrics_df
             ext.run_info = {"run_completed": True, "runtime_s": 0.0}
             sorting_analyzer.extensions[si_ext_name] = ext
+
+        # Restore quality_metrics.params["periods"] from the ragged time_support
+        # column when present, so SI sees the same per-unit windows the metric
+        # values were computed over.
+        qm_periods = _periods_from_time_support(nwb_table, sorting_analyzer, unit_period_dtype)
+        qm_ext = sorting_analyzer.extensions.get("quality_metrics")
+        if qm_periods is not None and qm_ext is not None:
+            qm_ext.params["periods"] = qm_periods
 
 
 def _periods_from_time_support(nwb_table, sorting_analyzer, unit_period_dtype):
