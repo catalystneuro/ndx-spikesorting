@@ -512,17 +512,16 @@ def _convert_unit_metrics(
             )
         )
 
-    vup_ext = sorting_analyzer.get_extension("valid_unit_periods")
-    if vup_ext is not None:
+    qm_periods = qm_params.get("periods") if qm_params else None
+    if qm_periods is not None and len(qm_periods) > 0:
         if sorting_analyzer.get_num_segments() > 1:
             raise NotImplementedError(
-                "valid_unit_periods round-trip is single-segment only; "
+                "time_support round-trip is single-segment only; "
                 "multi-segment support not yet implemented."
             )
         sampling_frequency = sorting_analyzer.sampling_frequency
-        valid_periods_data = vup_ext.get_data(outputs="numpy")
         per_unit_windows: list[list[tuple[float, float]]] = [[] for _ in range(n_units)]
-        for period in valid_periods_data:
+        for period in qm_periods:
             unit_index = int(period["unit_index"])
             start_s = float(period["start_sample_index"]) / sampling_frequency
             stop_s = float(period["end_sample_index"]) / sampling_frequency
@@ -1398,6 +1397,7 @@ def _load_unit_metrics(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
     import warnings
 
     import pandas as pd
+    from spikeinterface.core.base import unit_period_dtype
     from spikeinterface.core.sortinganalyzer import get_extension_class
 
     unit_metrics = getattr(extensions, "unit_metrics", None)
@@ -1441,6 +1441,12 @@ def _load_unit_metrics(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
             for si_ext_name in targets:
                 per_extension_columns.setdefault(si_ext_name, {})[col_name] = values
 
+        # Reconstruct the structured `periods` array from the ragged
+        # (time_support, time_support_index) columns when present. The result
+        # is fed into quality_metrics.params["periods"] so SI sees the same
+        # per-unit windows the metric values were computed over.
+        qm_periods = _periods_from_time_support(nwb_table, sorting_analyzer, unit_period_dtype)
+
         for si_ext_name, columns_dict in per_extension_columns.items():
             ext_class = get_extension_class(si_ext_name)
             if ext_class is None:
@@ -1457,6 +1463,8 @@ def _load_unit_metrics(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
                     if n not in metric_names:
                         metric_names.append(n)
                 existing.params["metrics_to_compute"] = list(metric_names)
+                if qm_periods is not None and si_ext_name == "quality_metrics":
+                    existing.params["periods"] = qm_periods
                 continue
             metrics_df = pd.DataFrame(columns_dict, index=unit_ids)
             params = per_extension_params.get(si_ext_name, {})
@@ -1467,9 +1475,42 @@ def _load_unit_metrics(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
                 "metrics_to_compute": list(columns_dict.keys()),
                 "delete_existing_metrics": False,
             }
+            if qm_periods is not None and si_ext_name == "quality_metrics":
+                ext.params["periods"] = qm_periods
             ext.data["metrics"] = metrics_df
             ext.run_info = {"run_completed": True, "runtime_s": 0.0}
             sorting_analyzer.extensions[si_ext_name] = ext
+
+
+def _periods_from_time_support(nwb_table, sorting_analyzer, unit_period_dtype):
+    """Build SI's structured periods array from a UnitMetrics time_support column.
+
+    Returns None when the table has no time_support column. Single-segment only
+    (segment_index=0).
+    """
+    if "time_support" not in nwb_table.colnames:
+        return None
+    # When the column is ragged, nwb_table["time_support"] resolves to its
+    # VectorIndex (offsets in .data, underlying values in .target.data).
+    ts_accessor = nwb_table["time_support"]
+    end_offsets = np.asarray(ts_accessor.data[:], dtype=np.int64)
+    flat_intervals = np.asarray(ts_accessor.target.data[:], dtype=np.float64)
+    unit_indices_col = np.asarray(nwb_table["unit"].data[:], dtype=np.int64)
+    sampling_frequency = sorting_analyzer.sampling_frequency
+
+    n_periods = int(end_offsets[-1]) if len(end_offsets) > 0 else 0
+    periods = np.zeros(n_periods, dtype=unit_period_dtype)
+    cursor = 0
+    for row_idx, end in enumerate(end_offsets):
+        unit_index = int(unit_indices_col[row_idx])
+        for window in flat_intervals[cursor:end]:
+            start_s, stop_s = float(window[0]), float(window[1])
+            periods["segment_index"][cursor] = 0
+            periods["start_sample_index"][cursor] = int(round(start_s * sampling_frequency))
+            periods["end_sample_index"][cursor] = int(round(stop_s * sampling_frequency))
+            periods["unit_index"][cursor] = unit_index
+            cursor += 1
+    return periods
 
 
 def _load_valid_unit_periods_from_nwb(extensions, sorting_analyzer):
