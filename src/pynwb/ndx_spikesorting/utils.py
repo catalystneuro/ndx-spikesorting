@@ -28,6 +28,7 @@ from ndx_spikesorting import (
     PCAProjectionsByChannel,
     PCAProjectionsConcatenated,
     FiringRate,
+    MetricVectorData,
     UnitMetrics,
     ValidUnitPeriods,
     SpikeSortingExtensions,
@@ -433,17 +434,53 @@ def _add_cell_intrinsic_columns_to_units(
         )
 
 
+def _units_table_id_lookup(units_table) -> dict[str, int]:
+    """Map each unit id in an NWB Units table to its row index.
+
+    Prefers the ``unit_name`` column (canonical when string unit ids are
+    written via neuroconv); falls back to the ``id`` ElementIdentifiers.
+    Keys are stringified to match SpikeInterface's stringification on read.
+    """
+    if "unit_name" in units_table.colnames:
+        ids = list(units_table["unit_name"][:])
+    else:
+        ids = list(units_table.id[:])
+    return {str(uid): i for i, uid in enumerate(ids)}
+
+
+def _analyzer_positions_to_units_rows(sorting_analyzer, units_table) -> list[int]:
+    """For each analyzer position i, return the nwbfile.units row index for that unit id.
+
+    Raises ValueError if an analyzer unit id has no matching row in the units
+    table. This is what makes the writer order-independent: the resulting list,
+    used as DTR data, points each row of UnitMetrics at the right nwbfile.units
+    row regardless of whether the two tables share an ordering.
+    """
+    id_lookup = _units_table_id_lookup(units_table)
+    analyzer_ids = [str(uid) for uid in sorting_analyzer.unit_ids]
+    missing = [uid for uid in analyzer_ids if uid not in id_lookup]
+    if missing:
+        raise ValueError(
+            f"sorting_analyzer.unit_ids has no matching row in nwbfile.units for: {missing}. "
+            f"Available units in nwbfile.units: {sorted(id_lookup.keys())}"
+        )
+    return [id_lookup[uid] for uid in analyzer_ids]
+
+
 def _convert_unit_metrics(
     sorting_analyzer: "SortingAnalyzer",
     nwbfile: NWBFile,
+    time_support_ref: "ValidUnitPeriods | None" = None,
 ) -> UnitMetrics | None:
     """Build a UnitMetrics instance from SI's ``quality_metrics`` extension.
 
     Each row of the table references one unit (via the ``unit``
     ``DynamicTableRegion``) and carries that unit's run-dependent metric values
-    as typed columns. If ``valid_unit_periods`` is also computed, the per-unit
-    valid windows are written as ``time_support`` on the table.
-    Returns ``None`` when ``quality_metrics`` is not computed.
+    as ``MetricVectorData`` columns. When ``time_support_ref`` is provided, each
+    metric column gets a ``time_support`` attribute pointing to that
+    ``ValidUnitPeriods`` table, so the per-unit constraint intervals are stored
+    once and referenced by every column they apply to. Returns ``None`` when
+    neither ``quality_metrics`` nor ``template_metrics`` is computed.
     """
     qm_ext = sorting_analyzer.get_extension("quality_metrics")
     tm_ext = sorting_analyzer.get_extension("template_metrics")
@@ -471,86 +508,33 @@ def _convert_unit_metrics(
     else:
         df = tm_ext.get_data()
 
-    n_units = len(sorting_analyzer.unit_ids)
-    qm_params = qm_ext.params or {} if qm_ext is not None else {}
-
-    # Per-row unit DTR pointing back to nwbfile.units (one row per unit).
+    # Per-row unit DTR pointing back to nwbfile.units (one row per unit). We
+    # resolve each analyzer unit_id to a nwbfile.units row index by identity
+    # rather than position, so the DTR stays correct even if nwbfile.units is
+    # reordered or interleaved with units we don't own.
+    dtr_data = _analyzer_positions_to_units_rows(sorting_analyzer, nwbfile.units)
     unit_column = DynamicTableRegion(
         name="unit",
-        data=list(range(n_units)),
+        data=dtr_data,
         description="Reference to nwbfile.units row this metric value applies to.",
         table=nwbfile.units,
     )
 
     columns = [unit_column]
 
-    # Track which DataFrame columns we have already written via typed-column
-    # paths so we do not duplicate them as plain VectorData below. Currently
-    # empty (no run-dependent typed columns committed in v1), but keeps the
-    # design open for adding typed columns in a later version.
-    typed_column_names: set[str] = set()
-    for col_cls, (si_name, _) in UNIT_METRICS_TYPED_COLUMNS.items():
-        if si_name not in df.columns:
-            continue
-        col_kwargs = _build_column_kwargs(col_cls, si_name, df[si_name].to_numpy(), qm_params)
-        columns.append(col_cls(**col_kwargs))
-        typed_column_names.add(si_name)
-
-    # The remaining quality_metrics DataFrame columns become plain VectorData
-    # on the UnitMetrics instance. Column names are preserved so the loader can
-    # reconstruct SI's quality_metrics extension on read.
+    # Each metric column becomes a MetricVectorData so it can carry the optional
+    # time_support reference. Column names are preserved so the read path can
+    # route each column to the right SI extension via COLUMN_TO_EXTENSION.
     for col_name in df.columns:
-        if col_name in typed_column_names:
-            continue
-        col_values = df[col_name].to_numpy()
-        # Coerce to float for storage; NaNs are preserved.
-        columns.append(
-            VectorData(
-                name=col_name,
-                data=col_values.astype(float),
-                description=f"Run-dependent metric: {col_name}.",
-            )
+        col_values = df[col_name].to_numpy().astype(float)
+        col_kwargs = dict(
+            name=col_name,
+            data=col_values,
+            description=f"Run-dependent metric: {col_name}.",
         )
-
-    qm_periods = qm_params.get("periods") if qm_params else None
-    if qm_periods is not None and len(qm_periods) > 0:
-        if sorting_analyzer.get_num_segments() > 1:
-            raise NotImplementedError(
-                "time_support round-trip is single-segment only; "
-                "multi-segment support not yet implemented."
-            )
-        sampling_frequency = sorting_analyzer.sampling_frequency
-        per_unit_windows: list[list[tuple[float, float]]] = [[] for _ in range(n_units)]
-        for period in qm_periods:
-            unit_index = int(period["unit_index"])
-            start_s = float(period["start_sample_index"]) / sampling_frequency
-            stop_s = float(period["end_sample_index"]) / sampling_frequency
-            per_unit_windows[unit_index].append((start_s, stop_s))
-
-        flat_intervals: list[list[float]] = []
-        cumulative = []
-        running = 0
-        for windows in per_unit_windows:
-            for start_s, stop_s in windows:
-                flat_intervals.append([start_s, stop_s])
-            running += len(windows)
-            cumulative.append(running)
-
-        time_support_vd = VectorData(
-            name="time_support",
-            data=np.array(flat_intervals, dtype=np.float64) if flat_intervals else np.zeros((0, 2)),
-            description=(
-                "Per-unit time intervals (start, stop) in seconds over which this row's "
-                "metric values were computed."
-            ),
-        )
-        time_support_index = VectorIndex(
-            name="time_support_index",
-            data=np.array(cumulative, dtype=np.int64),
-            target=time_support_vd,
-        )
-        columns.append(time_support_vd)
-        columns.append(time_support_index)
+        if time_support_ref is not None:
+            col_kwargs["time_support"] = time_support_ref
+        columns.append(MetricVectorData(**col_kwargs))
 
     return UnitMetrics(
         name="quality_metrics",
@@ -559,28 +543,45 @@ def _convert_unit_metrics(
     )
 
 
-def _convert_valid_unit_periods(
+def _build_valid_unit_periods(
     sorting_analyzer: "SortingAnalyzer",
     units_table=None,
 ) -> ValidUnitPeriods | None:
-    ext = sorting_analyzer.get_extension("valid_unit_periods")
-    if ext is None:
-        return None
-    valid_periods_data = ext.get_data(outputs="numpy")
+    """Build a ValidUnitPeriods table from the best available periods source.
+
+    Prefers ``quality_metrics.params["periods"]`` when set (that array is what
+    the metric columns are actually constrained by). Falls back to the SI
+    ``valid_unit_periods`` extension when only that is available. Returns
+    ``None`` if neither source has periods.
+    """
+    qm_ext = sorting_analyzer.get_extension("quality_metrics")
+    qm_periods = qm_ext.params.get("periods") if qm_ext is not None and qm_ext.params else None
+    if qm_periods is not None and len(qm_periods) > 0:
+        periods = qm_periods
+    else:
+        vup_ext = sorting_analyzer.get_extension("valid_unit_periods")
+        if vup_ext is None:
+            return None
+        periods = vup_ext.get_data(outputs="numpy")
+        if len(periods) == 0:
+            return None
+
+    if sorting_analyzer.get_num_segments() > 1:
+        raise NotImplementedError(
+            "ValidUnitPeriods round-trip is single-segment only; "
+            "multi-segment support not yet implemented."
+        )
+
     sampling_frequency = sorting_analyzer.sampling_frequency
+    analyzer_pos_to_row = _analyzer_positions_to_units_rows(sorting_analyzer, units_table)
 
-    start_times = []
-    stop_times = []
-    unit_indices = []
-
-    for period in valid_periods_data:
-        start_times.append(float(period["start_sample_index"]) / sampling_frequency)
-        stop_times.append(float(period["end_sample_index"]) / sampling_frequency)
-        unit_indices.append(int(period["unit_index"]))
+    start_times = [float(p["start_sample_index"]) / sampling_frequency for p in periods]
+    stop_times = [float(p["end_sample_index"]) / sampling_frequency for p in periods]
+    unit_row_indices = [analyzer_pos_to_row[int(p["unit_index"])] for p in periods]
 
     vup_unit_column = DynamicTableRegion(
         name="unit",
-        data=unit_indices,
+        data=unit_row_indices,
         description="Reference to units table for each valid period.",
         table=units_table,
     )
@@ -797,16 +798,21 @@ def _convert_all_extensions(sorting_analyzer, nwbfile):  # noqa: C901
             raise ValueError("PCA projections require waveforms to be computed.")
         converted.update(_convert_pca(sorting_analyzer, nwbfile, converted["waveforms"]))
 
+    # Build ValidUnitPeriods first (preferring quality_metrics.params["periods"]
+    # when set, since that's what the metric columns are actually constrained
+    # by). UnitMetrics columns reference this table via their time_support
+    # attribute, so the intervals are stored once and pointed to by every
+    # column they apply to.
+    vup = _build_valid_unit_periods(sorting_analyzer, units_table=nwbfile.units)
+    if vup is not None:
+        converted["valid_unit_periods"] = vup
+
     # Run-dependent metrics flow into a UnitMetrics instance (or several, as
     # support for multiple curation runs is added). For v1 there is one
     # UnitMetrics per file, sourced from SI's quality_metrics extension.
-    unit_metrics = _convert_unit_metrics(sorting_analyzer, nwbfile)
+    unit_metrics = _convert_unit_metrics(sorting_analyzer, nwbfile, time_support_ref=vup)
     if unit_metrics is not None:
         converted["__unit_metrics__"] = unit_metrics
-
-    vup = _convert_valid_unit_periods(sorting_analyzer, units_table=nwbfile.units)
-    if vup is not None:
-        converted["valid_unit_periods"] = vup
 
     return converted
 
@@ -1383,6 +1389,54 @@ def _load_cell_intrinsic_from_units(units_table, sorting_analyzer: "SortingAnaly
         sorting_analyzer.extensions[si_ext_name] = ext
 
 
+def _collect_unit_metrics_columns(nwb_table, sorting_analyzer):
+    """Walk a UnitMetrics table once and return (per_extension_columns, time_support_link).
+
+    Reorders each column's row values into analyzer-unit-position order using
+    the DTR-resolved row → analyzer position map, so the resulting arrays are
+    aligned with ``sorting_analyzer.unit_ids`` regardless of whether the on-disk
+    row order matches.
+    """
+    import warnings
+
+    row_to_analyzer_pos = _dtr_rows_to_analyzer_positions(nwb_table["unit"], sorting_analyzer)
+    # Permutation that places UnitMetrics row i's value at the slot corresponding
+    # to its analyzer unit position in the output array.
+    reorder = np.argsort(row_to_analyzer_pos)
+
+    per_extension_columns: dict[str, dict[str, np.ndarray]] = {}
+    time_support_link = None
+    for col_name in nwb_table.colnames:
+        if col_name == "unit":
+            continue
+        col = nwb_table[col_name]
+        if time_support_link is None:
+            time_support_link = getattr(col, "time_support", None)
+        # Typed-column registry path (empty in v1; future-proofing).
+        matched = False
+        for col_cls, (si_name, si_ext_name) in UNIT_METRICS_TYPED_COLUMNS.items():
+            if isinstance(col, col_cls):
+                raw = np.asarray(col.data[:])
+                per_extension_columns.setdefault(si_ext_name, {})[si_name] = raw[reorder]
+                matched = True
+                break
+        if matched:
+            continue
+        targets = COLUMN_TO_EXTENSION.get(col_name)
+        if targets is None:
+            warnings.warn(
+                f"Column {col_name!r} on UnitMetrics is not in "
+                "COLUMN_TO_EXTENSION; routing to quality_metrics by default. "
+                "Update the dict in utils.py to silence this warning.",
+                stacklevel=2,
+            )
+            targets = ("quality_metrics",)
+        values = np.asarray(col.data[:])[reorder]
+        for si_ext_name in targets:
+            per_extension_columns.setdefault(si_ext_name, {})[col_name] = values
+    return per_extension_columns, time_support_link
+
+
 def _load_unit_metrics(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
     """Read UnitMetrics instances and reconstruct the relevant SI extensions.
 
@@ -1394,8 +1448,6 @@ def _load_unit_metrics(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
     dict falls back to ``quality_metrics`` (matching pre-fix behavior) and is
     surfaced via a warning so the dict can be kept in sync with SI's registries.
     """
-    import warnings
-
     import pandas as pd
     from spikeinterface.core.base import unit_period_dtype
     from spikeinterface.core.sortinganalyzer import get_extension_class
@@ -1408,38 +1460,10 @@ def _load_unit_metrics(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
     runs = unit_metrics.values() if hasattr(unit_metrics, "values") else [unit_metrics]
     for nwb_table in runs:
         unit_ids = sorting_analyzer.unit_ids
-        per_extension_columns: dict[str, dict[str, np.ndarray]] = {}
         per_extension_params: dict[str, dict] = {}
-
-        for col_name in nwb_table.colnames:
-            if col_name in ("unit", "time_support", "time_support_index"):
-                continue
-            col = nwb_table[col_name]
-            # First try the typed-column registry (empty in v1; kept for forward
-            # compatibility when run-dependent typed columns are added).
-            matched = False
-            for col_cls, (si_name, si_ext_name) in UNIT_METRICS_TYPED_COLUMNS.items():
-                if isinstance(col, col_cls):
-                    per_extension_columns.setdefault(si_ext_name, {})[si_name] = np.asarray(col.data[:])
-                    matched = True
-                    break
-            if matched:
-                continue
-            # Route plain VectorData columns by name via COLUMN_TO_EXTENSION.
-            # Replicate into every target extension when the column belongs to
-            # more than one (the SI extension-aliasing case).
-            targets = COLUMN_TO_EXTENSION.get(col_name)
-            if targets is None:
-                warnings.warn(
-                    f"Column {col_name!r} on UnitMetrics is not in "
-                    "COLUMN_TO_EXTENSION; routing to quality_metrics by default. "
-                    "Update the dict in utils.py to silence this warning.",
-                    stacklevel=2,
-                )
-                targets = ("quality_metrics",)
-            values = np.asarray(col.data[:])
-            for si_ext_name in targets:
-                per_extension_columns.setdefault(si_ext_name, {})[col_name] = values
+        per_extension_columns, time_support_link = _collect_unit_metrics_columns(
+            nwb_table, sorting_analyzer
+        )
 
         for si_ext_name, columns_dict in per_extension_columns.items():
             ext_class = get_extension_class(si_ext_name)
@@ -1471,43 +1495,58 @@ def _load_unit_metrics(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
             ext.run_info = {"run_completed": True, "runtime_s": 0.0}
             sorting_analyzer.extensions[si_ext_name] = ext
 
-        # Restore quality_metrics.params["periods"] from the ragged time_support
-        # column when present, so SI sees the same per-unit windows the metric
-        # values were computed over.
-        qm_periods = _periods_from_time_support(nwb_table, sorting_analyzer, unit_period_dtype)
+        # Restore quality_metrics.params["periods"] from the column-level
+        # time_support reference, when present.
+        qm_periods = _periods_from_time_support_link(time_support_link, sorting_analyzer, unit_period_dtype)
         qm_ext = sorting_analyzer.extensions.get("quality_metrics")
         if qm_periods is not None and qm_ext is not None:
             qm_ext.params["periods"] = qm_periods
 
 
-def _periods_from_time_support(nwb_table, sorting_analyzer, unit_period_dtype):
-    """Build SI's structured periods array from a UnitMetrics time_support column.
+def _dtr_rows_to_analyzer_positions(unit_dtr, sorting_analyzer) -> np.ndarray:
+    """Map DTR row indices (into nwbfile.units) into analyzer unit positions.
 
-    Returns None when the table has no time_support column. Single-segment only
-    (segment_index=0).
+    DTR ``data[i]`` is the nwbfile.units row index for the i-th referencing row.
+    We resolve each row back to its unit id (preferring ``unit_name``) and look
+    that id up in ``sorting_analyzer.unit_ids`` so the resulting integer is the
+    correct positional index into the analyzer regardless of any reordering.
     """
-    if "time_support" not in nwb_table.colnames:
+    units_table = unit_dtr.table
+    row_to_id = {row_idx: uid for uid, row_idx in _units_table_id_lookup(units_table).items()}
+    analyzer_id_to_pos = {str(uid): pos for pos, uid in enumerate(sorting_analyzer.unit_ids)}
+    dtr_rows = np.asarray(unit_dtr.data[:], dtype=np.int64)
+    out = np.empty(len(dtr_rows), dtype=np.int64)
+    for i, row_idx in enumerate(dtr_rows):
+        uid = row_to_id[int(row_idx)]
+        if uid not in analyzer_id_to_pos:
+            raise ValueError(
+                f"DTR references nwbfile.units row {int(row_idx)} (unit id {uid!r}), "
+                f"but that id is not in sorting_analyzer.unit_ids: {list(analyzer_id_to_pos.keys())}"
+            )
+        out[i] = analyzer_id_to_pos[uid]
+    return out
+
+
+def _periods_from_time_support_link(vup_table, sorting_analyzer, unit_period_dtype):
+    """Build SI's structured periods array from a linked ValidUnitPeriods table.
+
+    ``vup_table`` is a ``ValidUnitPeriods`` (TimeIntervals subclass) referenced
+    from a metric column's ``time_support`` attribute. Returns ``None`` when no
+    link was set. Single-segment only (segment_index=0).
+    """
+    if vup_table is None:
         return None
-    # When the column is ragged, nwb_table["time_support"] resolves to its
-    # VectorIndex (offsets in .data, underlying values in .target.data).
-    ts_accessor = nwb_table["time_support"]
-    end_offsets = np.asarray(ts_accessor.data[:], dtype=np.int64)
-    flat_intervals = np.asarray(ts_accessor.target.data[:], dtype=np.float64)
-    unit_indices_col = np.asarray(nwb_table["unit"].data[:], dtype=np.int64)
+    start_times = np.asarray(vup_table["start_time"][:], dtype=np.float64)
+    stop_times = np.asarray(vup_table["stop_time"][:], dtype=np.float64)
+    analyzer_positions = _dtr_rows_to_analyzer_positions(vup_table["unit"], sorting_analyzer)
     sampling_frequency = sorting_analyzer.sampling_frequency
 
-    n_periods = int(end_offsets[-1]) if len(end_offsets) > 0 else 0
+    n_periods = len(start_times)
     periods = np.zeros(n_periods, dtype=unit_period_dtype)
-    cursor = 0
-    for row_idx, end in enumerate(end_offsets):
-        unit_index = int(unit_indices_col[row_idx])
-        for window in flat_intervals[cursor:end]:
-            start_s, stop_s = float(window[0]), float(window[1])
-            periods["segment_index"][cursor] = 0
-            periods["start_sample_index"][cursor] = int(round(start_s * sampling_frequency))
-            periods["end_sample_index"][cursor] = int(round(stop_s * sampling_frequency))
-            periods["unit_index"][cursor] = unit_index
-            cursor += 1
+    periods["segment_index"] = 0
+    periods["start_sample_index"] = np.round(start_times * sampling_frequency).astype(np.int64)
+    periods["end_sample_index"] = np.round(stop_times * sampling_frequency).astype(np.int64)
+    periods["unit_index"] = analyzer_positions
     return periods
 
 
@@ -1521,7 +1560,7 @@ def _load_valid_unit_periods_from_nwb(extensions, sorting_analyzer):
 
     start_times = np.array(valid_periods_nwb["start_time"][:], dtype=np.float64)
     stop_times = np.array(valid_periods_nwb["stop_time"][:], dtype=np.float64)
-    unit_indices = np.array(valid_periods_nwb["unit"].data[:], dtype=np.int64)
+    analyzer_positions = _dtr_rows_to_analyzer_positions(valid_periods_nwb["unit"], sorting_analyzer)
 
     sampling_frequency = sorting_analyzer.sampling_frequency
     n_periods = len(start_times)
@@ -1530,7 +1569,7 @@ def _load_valid_unit_periods_from_nwb(extensions, sorting_analyzer):
     valid_periods["segment_index"] = 0
     valid_periods["start_sample_index"] = np.round(start_times * sampling_frequency).astype(np.int64)
     valid_periods["end_sample_index"] = np.round(stop_times * sampling_frequency).astype(np.int64)
-    valid_periods["unit_index"] = unit_indices
+    valid_periods["unit_index"] = analyzer_positions
 
     ext_class = get_extension_class("valid_unit_periods")
     ext = ext_class(sorting_analyzer)

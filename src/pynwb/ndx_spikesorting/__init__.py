@@ -31,6 +31,9 @@ PCAProjectionsConcatenated = get_class("PCAProjectionsConcatenated", "ndx-spikes
 # Canonical typed VectorData column for nwbfile.units
 FiringRate = get_class("FiringRate", "ndx-spikesorting")
 
+# Typed VectorData carrying an optional time_support reference attribute
+MetricVectorData = get_class("MetricVectorData", "ndx-spikesorting")
+
 # Multi-instance container for run-dependent metrics
 UnitMetrics = get_class("UnitMetrics", "ndx-spikesorting")
 
@@ -56,6 +59,7 @@ __all__ = [
     "PCAProjectionsByChannel",
     "PCAProjectionsConcatenated",
     "FiringRate",
+    "MetricVectorData",
     "UnitMetrics",
     "ValidUnitPeriods",
     "SpikeSortingExtensions",

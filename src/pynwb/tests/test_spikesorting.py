@@ -1370,10 +1370,15 @@ class TestAmplitudeScalingsRoundtrip(TestCase):
 
 
 def create_mock_unit_metrics(nwbfile: NWBFile, num_units: int = 3, with_time_support: bool = True):
-    """Create a mock UnitMetrics with plain VectorData metric columns.
+    """Create a mock UnitMetrics with MetricVectorData columns.
 
-    Optionally adds a ragged time_support column with two windows per unit.
+    When ``with_time_support`` is True, a ValidUnitPeriods table is also built
+    and each metric column gets its time_support attribute set to reference it.
+    Returns (unit_metrics, valid_unit_periods); the second value is None when
+    ``with_time_support`` is False.
     """
+    from ndx_spikesorting import MetricVectorData
+
     unit_column = DynamicTableRegion(
         name="unit",
         data=list(range(num_units)),
@@ -1381,57 +1386,33 @@ def create_mock_unit_metrics(nwbfile: NWBFile, num_units: int = 3, with_time_sup
         table=nwbfile.units,
     )
 
+    vup = None
+    if with_time_support:
+        vup = create_mock_valid_unit_periods(nwbfile, num_units=num_units, periods_per_unit=2)
+
     presence_data = np.random.rand(num_units)
     isi_data = np.random.rand(num_units) * 0.1
     cutoff_data = np.random.rand(num_units) * 0.2
 
+    def _col(name, description, data):
+        kwargs = dict(name=name, description=description, data=data)
+        if vup is not None:
+            kwargs["time_support"] = vup
+        return MetricVectorData(**kwargs)
+
     columns = [
         unit_column,
-        VectorData(
-            name="presence_ratio",
-            description="Fraction of bins in which the unit fired.",
-            data=presence_data,
-        ),
-        VectorData(
-            name="isi_violations_ratio",
-            description="Fraction of ISIs below the refractory threshold.",
-            data=isi_data,
-        ),
-        VectorData(
-            name="amplitude_cutoff",
-            description="Estimated fraction of spikes missed.",
-            data=cutoff_data,
-        ),
+        _col("presence_ratio", "Fraction of bins in which the unit fired.", presence_data),
+        _col("isi_violations_ratio", "Fraction of ISIs below the refractory threshold.", isi_data),
+        _col("amplitude_cutoff", "Estimated fraction of spikes missed.", cutoff_data),
     ]
 
-    if with_time_support:
-        flat = []
-        cumulative = []
-        running = 0
-        for unit_index in range(num_units):
-            flat.append([unit_index * 10.0, unit_index * 10.0 + 2.0])
-            flat.append([unit_index * 10.0 + 3.0, unit_index * 10.0 + 4.5])
-            running += 2
-            cumulative.append(running)
-
-        time_support_vd = VectorData(
-            name="time_support",
-            data=np.array(flat, dtype=np.float64),
-            description="Per-unit time intervals (start, stop) in seconds over which metrics were computed.",
-        )
-        time_support_idx = VectorIndex(
-            name="time_support_index",
-            data=np.array(cumulative, dtype=np.int64),
-            target=time_support_vd,
-        )
-        columns.append(time_support_vd)
-        columns.append(time_support_idx)
-
-    return UnitMetrics(
+    unit_metrics = UnitMetrics(
         name="quality_metrics",
         description="Run-dependent per-unit metrics from one analysis run.",
         columns=columns,
     )
+    return unit_metrics, vup
 
 
 def create_mock_valid_unit_periods(nwbfile: NWBFile, num_units: int = 3, periods_per_unit: int = 2):
@@ -1471,27 +1452,28 @@ class TestUnitMetricsConstructor(TestCase):
     """Unit tests for UnitMetrics constructor."""
 
     def test_constructor_without_intervals(self):
-        """UnitMetrics is constructed with the expected columns."""
+        """UnitMetrics columns carry no time_support attribute when not requested."""
         nwbfile = set_up_nwbfile()
-        run = create_mock_unit_metrics(nwbfile, with_time_support=False)
+        run, vup = create_mock_unit_metrics(nwbfile, with_time_support=False)
 
         self.assertEqual(run.name, "quality_metrics")
         self.assertIn("presence_ratio", run.colnames)
         self.assertIn("isi_violations_ratio", run.colnames)
         self.assertIn("unit", run.colnames)
-        self.assertNotIn("time_support", run.colnames)
+        self.assertIsNone(vup)
+        self.assertIsNone(getattr(run["presence_ratio"], "time_support", None))
         self.assertEqual(len(run["presence_ratio"].data), 3)
         self.assertEqual(len(run["isi_violations_ratio"].data), 3)
         self.assertEqual(len(run["amplitude_cutoff"].data), 3)
 
     def test_constructor_with_intervals(self):
-        """UnitMetrics carries time_support as a ragged column."""
+        """Each metric column references the same ValidUnitPeriods via time_support."""
         nwbfile = set_up_nwbfile()
-        run = create_mock_unit_metrics(nwbfile, with_time_support=True)
+        run, vup = create_mock_unit_metrics(nwbfile, with_time_support=True)
 
-        self.assertIn("time_support", run.colnames)
-        # 3 units * 2 windows => 6 intervals in the flat data
-        self.assertEqual(run["time_support"].target.data.shape, (6, 2))
+        self.assertIsNotNone(vup)
+        for col_name in ("presence_ratio", "isi_violations_ratio", "amplitude_cutoff"):
+            self.assertIs(run[col_name].time_support, vup)
 
 
 class TestUnitMetricsRoundtrip(TestCase):
@@ -1505,16 +1487,17 @@ class TestUnitMetricsRoundtrip(TestCase):
         remove_test_file(self.path)
 
     def test_roundtrip(self):
-        """Test writing and reading a UnitMetrics instance."""
+        """Test writing and reading a UnitMetrics instance with linked ValidUnitPeriods."""
         electrodes_region = self.nwbfile.create_electrode_table_region(
             region=list(range(10)),
             description="all electrodes",
         )
         units_region = create_units_region(self.nwbfile)
 
-        run = create_mock_unit_metrics(self.nwbfile, with_time_support=True)
+        run, vup = create_mock_unit_metrics(self.nwbfile, with_time_support=True)
 
         extensions = SpikeSortingExtensions(name="extensions")
+        extensions.valid_unit_periods = vup
         extensions.add_unit_metrics(run)
 
         container = SpikeSortingContainer(
@@ -1546,9 +1529,13 @@ class TestUnitMetricsRoundtrip(TestCase):
             np.testing.assert_array_almost_equal(
                 read_run["isi_violations_ratio"][:], run["isi_violations_ratio"].data
             )
+            # The link survives the round-trip: each metric column resolves to
+            # the same ValidUnitPeriods table.
+            ts_link = read_run["presence_ratio"].time_support
+            self.assertIsNotNone(ts_link)
             np.testing.assert_array_equal(
-                read_run["time_support"].target.data[:],
-                run["time_support"].target.data,
+                np.asarray(ts_link["start_time"][:]),
+                np.asarray(vup["start_time"].data),
             )
 
 
@@ -2275,3 +2262,167 @@ class TestReadSortingAnalyzerFromNwb(TestCase):
             f"COLUMN_TO_EXTENSION: {uncovered}. Add them to the dict in "
             "src/pynwb/ndx_spikesorting/utils.py.",
         )
+
+
+class TestUnitMetricsTimeSupportLinkRoundtrip(TestCase):
+    """Round-trip the time_support column-attribute link through a SortingAnalyzer.
+
+    Exercises three properties that the column-attribute design has to satisfy:
+    (1) when quality_metrics is computed with ``periods=<array>``, those periods
+    round-trip through a linked ValidUnitPeriods table; (2) the DTR is
+    id-aware, so a permuted nwbfile.units does not corrupt unit assignment;
+    (3) the absence of qm periods is also handled cleanly.
+    """
+
+    def setUp(self):
+        from datetime import datetime, timezone
+
+        from spikeinterface.core import create_sorting_analyzer, generate_ground_truth_recording
+        from spikeinterface.core.base import unit_period_dtype
+        from neuroconv.tools.spikeinterface import add_recording_to_nwbfile, add_sorting_to_nwbfile
+
+        self.unit_period_dtype = unit_period_dtype
+        self.add_recording_to_nwbfile = add_recording_to_nwbfile
+        self.add_sorting_to_nwbfile = add_sorting_to_nwbfile
+        self.datetime, self.timezone = datetime, timezone
+
+        recording, sorting = generate_ground_truth_recording(
+            durations=[5.0], num_units=3, num_channels=8, seed=42
+        )
+        self.recording, self.sorting = recording, sorting
+        self.sorting_analyzer = create_sorting_analyzer(
+            sorting=sorting, recording=recording, format="memory", sparse=True
+        )
+        self.sorting_analyzer.compute(
+            {"random_spikes": {"max_spikes_per_unit": 10, "seed": 42}, "templates": {}, "noise_levels": {}}
+        )
+
+        fs = self.sorting_analyzer.sampling_frequency
+        n_units = len(self.sorting_analyzer.unit_ids)
+        periods = []
+        for u in range(n_units):
+            periods.append((0, int(0.0 * fs), int(1.5 * fs), u))
+            periods.append((0, int(2.0 * fs), int(4.5 * fs), u))
+        self.periods_arr = np.array(periods, dtype=unit_period_dtype)
+        self.sorting_analyzer.compute(
+            {"quality_metrics": {"periods": self.periods_arr, "metric_names": ["firing_rate", "presence_ratio"]}}
+        )
+
+        self.path = "test_unit_metrics_time_support_link.nwb"
+
+    def tearDown(self):
+        remove_test_file(self.path)
+
+    def _build_nwbfile(self, units_unit_ids=None):
+        nwbfile = NWBFile(
+            session_description="t",
+            identifier="t",
+            session_start_time=self.datetime.now(self.timezone.utc),
+        )
+        self.add_recording_to_nwbfile(self.recording, nwbfile=nwbfile, write_as="raw", iterator_type=None)
+        self.add_sorting_to_nwbfile(self.sorting, nwbfile=nwbfile, write_as="units")
+        if units_unit_ids is not None:
+            # Permute the unit_name column to simulate a units table whose row
+            # order does not match the analyzer's unit_ids order.
+            unit_name_col = nwbfile.units["unit_name"]
+            unit_name_col.data[:] = units_unit_ids
+        return nwbfile
+
+    def test_periods_round_trip_via_link(self):
+        """qm periods round-trip to a linked ValidUnitPeriods and back."""
+        from ndx_spikesorting import add_sorting_analyzer_to_nwbfile, read_sorting_analyzer_from_nwb
+
+        nwbfile = self._build_nwbfile()
+        add_sorting_analyzer_to_nwbfile(self.sorting_analyzer, nwbfile)
+
+        # In-memory: metric columns carry the link and the standalone table exists.
+        ext = nwbfile.processing["ecephys"]["spike_sorting"].spike_sorting_extensions
+        um = ext.unit_metrics["quality_metrics"]
+        self.assertIsNotNone(um["presence_ratio"].time_support)
+        self.assertIsNotNone(ext.valid_unit_periods)
+        # No legacy inline column.
+        self.assertNotIn("time_support", um.colnames)
+
+        with NWBHDF5IO(self.path, "w") as io:
+            io.write(nwbfile)
+        sa2 = read_sorting_analyzer_from_nwb(self.path)
+
+        p2 = sa2.get_extension("quality_metrics").params.get("periods")
+        self.assertIsNotNone(p2)
+        orig_sort = np.sort(self.periods_arr, order=["unit_index", "start_sample_index"])
+        new_sort = np.sort(p2, order=["unit_index", "start_sample_index"])
+        np.testing.assert_array_equal(orig_sort["start_sample_index"], new_sort["start_sample_index"])
+        np.testing.assert_array_equal(orig_sort["end_sample_index"], new_sort["end_sample_index"])
+        np.testing.assert_array_equal(orig_sort["unit_index"], new_sort["unit_index"])
+
+    def test_periods_round_trip_with_permuted_units(self):
+        """A permuted nwbfile.units row order does not corrupt unit assignment.
+
+        After permuting unit_name on the Units table, the id-aware DTR ensures
+        each metric value still ends up associated with the correct unit on
+        round-trip. The qm periods are reconstructed correctly per unit too.
+        """
+        from ndx_spikesorting import add_sorting_analyzer_to_nwbfile, read_sorting_analyzer_from_nwb
+
+        analyzer_ids = [str(u) for u in self.sorting_analyzer.unit_ids]
+        # Reverse the names so row i carries the unit that the analyzer has at
+        # position (n - 1 - i).
+        permuted = list(reversed(analyzer_ids))
+
+        nwbfile = self._build_nwbfile(units_unit_ids=permuted)
+        add_sorting_analyzer_to_nwbfile(self.sorting_analyzer, nwbfile)
+
+        with NWBHDF5IO(self.path, "w") as io:
+            io.write(nwbfile)
+        sa2 = read_sorting_analyzer_from_nwb(self.path)
+
+        # Reconstructed analyzer's unit order follows the on-disk units table,
+        # which is the permuted order. Metric values per unit must match the
+        # original analyzer's, looked up by id rather than position.
+        original_qm = self.sorting_analyzer.get_extension("quality_metrics").get_data()
+        restored_qm = sa2.get_extension("quality_metrics").get_data()
+        for unit_id in original_qm.index:
+            uid = str(unit_id)
+            self.assertIn(uid, restored_qm.index.astype(str).tolist())
+            for col in ("firing_rate", "presence_ratio"):
+                if col not in restored_qm.columns:
+                    continue
+                expected = original_qm.loc[unit_id, col]
+                got = restored_qm.loc[uid, col] if uid in restored_qm.index else restored_qm.loc[unit_id, col]
+                if not np.isnan(expected):
+                    self.assertAlmostEqual(expected, got, places=5)
+
+        # Periods come back with correct unit positions relative to the
+        # reconstructed analyzer.
+        p2 = sa2.get_extension("quality_metrics").params.get("periods")
+        self.assertIsNotNone(p2)
+        # Reverse-map: for each restored period, the analyzer-position must
+        # round-trip to the same unit id as the original.
+        restored_unit_ids_by_pos = list(sa2.unit_ids)
+        for p_orig in self.periods_arr:
+            orig_uid = analyzer_ids[int(p_orig["unit_index"])]
+            # Find any matching period in restored: same start/end, unit id matches.
+            mask = (
+                (p2["start_sample_index"] == int(p_orig["start_sample_index"]))
+                & (p2["end_sample_index"] == int(p_orig["end_sample_index"]))
+            )
+            candidate_positions = p2["unit_index"][mask]
+            candidate_uids = {restored_unit_ids_by_pos[int(pos)] for pos in candidate_positions}
+            self.assertIn(orig_uid, candidate_uids)
+
+    def test_no_qm_periods_leaves_no_link(self):
+        """When qm has no periods, no ValidUnitPeriods is written and no link is set."""
+        from ndx_spikesorting import add_sorting_analyzer_to_nwbfile
+
+        # Re-compute quality_metrics without periods.
+        self.sorting_analyzer.compute(
+            {"quality_metrics": {"metric_names": ["firing_rate"], "delete_existing_metrics": True}}
+        )
+
+        nwbfile = self._build_nwbfile()
+        add_sorting_analyzer_to_nwbfile(self.sorting_analyzer, nwbfile)
+
+        ext = nwbfile.processing["ecephys"]["spike_sorting"].spike_sorting_extensions
+        um = ext.unit_metrics["quality_metrics"]
+        self.assertIsNone(getattr(um["firing_rate"], "time_support", None))
+        self.assertIsNone(ext.valid_unit_periods)

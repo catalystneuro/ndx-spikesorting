@@ -8,6 +8,7 @@ from pynwb.spec import (
     NWBAttributeSpec,
     NWBDatasetSpec,
     NWBLinkSpec,
+    NWBRefSpec,
 )
 
 
@@ -584,15 +585,39 @@ def main():
         ],
     )
 
+    metric_vector_data = NWBDatasetSpec(
+        neurodata_type_def="MetricVectorData",
+        neurodata_type_inc="VectorData",
+        doc=(
+            "A VectorData column carrying a run-dependent per-unit metric. May "
+            "reference the TimeIntervals (typically ValidUnitPeriods) over which "
+            "its values were computed, via the optional `time_support` attribute."
+        ),
+        attributes=[
+            NWBAttributeSpec(
+                name="time_support",
+                doc=(
+                    "Object reference to the TimeIntervals (typically "
+                    "ValidUnitPeriods) over which this column's metric values "
+                    "were computed. Absent when no time restriction was applied."
+                ),
+                dtype=NWBRefSpec(target_type="ValidUnitPeriods", reftype="object"),
+                required=False,
+            ),
+        ],
+    )
+
     unit_metrics = NWBGroupSpec(
         neurodata_type_def="UnitMetrics",
         neurodata_type_inc="DynamicTable",
         default_name="unit_metrics",
         doc=(
             "Per-unit metric values from one analysis run. Each row is one unit; "
-            "columns are metric values. The required `unit` DynamicTableRegion "
-            "references the corresponding row in nwbfile.units. Multiple instances "
-            "coexist under SpikeSortingExtensions for different analysis runs."
+            "columns are metric values, typed as MetricVectorData so they can carry "
+            "an optional reference to the TimeIntervals over which they were "
+            "computed. The required `unit` DynamicTableRegion references the "
+            "corresponding row in nwbfile.units. Multiple instances coexist under "
+            "SpikeSortingExtensions for different analysis runs."
         ),
         datasets=[
             NWBDatasetSpec(
@@ -602,29 +627,6 @@ def main():
                     "Reference to the row in nwbfile.units that each row of this "
                     "UnitMetrics describes."
                 ),
-            ),
-            NWBDatasetSpec(
-                name="time_support",
-                neurodata_type_inc="VectorData",
-                dtype="float",
-                dims=["num_intervals", "start_end"],
-                shape=[None, 2],
-                doc=(
-                    "Per-unit time intervals (start, stop) in seconds over which this "
-                    "row's metric values were computed. Each row's metric values reflect "
-                    "only events that fell within these per-unit windows. Ragged by row "
-                    "via time_support_index. Distinct from `Units.obs_intervals` (NWB-core), "
-                    "which constrains the validity of `spike_times` on the Units table; "
-                    "this column records the analysis-time windows used as input to this "
-                    "row's computation."
-                ),
-                quantity="?",
-            ),
-            NWBDatasetSpec(
-                name="time_support_index",
-                neurodata_type_inc="VectorIndex",
-                doc="Index column for the ragged time_support column.",
-                quantity="?",
             ),
         ],
     )
@@ -824,8 +826,9 @@ def main():
         pca_projections_by_channel,
         pca_projections_concatenated,
         firing_rate,
-        unit_metrics,
         valid_unit_periods,
+        metric_vector_data,
+        unit_metrics,
         spike_sorting_extensions,
         spike_sorting_container,
     ]
