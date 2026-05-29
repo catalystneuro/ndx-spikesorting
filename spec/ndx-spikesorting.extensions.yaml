@@ -399,9 +399,9 @@ groups:
     neurodata_type_inc: DynamicTableRegion
     doc: Reference to the units table for each row, identifying which unit each 
       valid period belongs to.
-- neurodata_type_def: UnitMetrics
+- neurodata_type_def: UnitsMetrics
   neurodata_type_inc: DynamicTable
-  default_name: unit_metrics
+  default_name: units_metrics
   doc: Per-unit metric values from one analysis run. Each row is one unit; 
     columns are metric values, typed as MetricVectorData so they can carry an 
     optional reference to the TimeIntervals over which they were computed. The 
@@ -411,8 +411,8 @@ groups:
   datasets:
   - name: unit
     neurodata_type_inc: DynamicTableRegion
-    doc: Reference to the row in nwbfile.units that each row of this UnitMetrics
-      describes.
+    doc: Reference to the row in nwbfile.units that each row of this 
+      UnitsMetrics describes.
 - neurodata_type_def: SpikeSortingExtensions
   neurodata_type_inc: NWBDataInterface
   default_name: extensions
@@ -458,7 +458,7 @@ groups:
   - neurodata_type_inc: PCAProjectionsConcatenated
     doc: Concatenated-channels PCA projections of spikes (single-ragged).
     quantity: '?'
-  - neurodata_type_inc: UnitMetrics
+  - neurodata_type_inc: UnitsMetrics
     doc: Per-unit metrics from one analysis run. Multiple instances coexist for 
       different runs (different parameter sets).
     quantity: '*'

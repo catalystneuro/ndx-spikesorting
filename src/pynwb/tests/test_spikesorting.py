@@ -23,7 +23,7 @@ from ndx_spikesorting import (
     SpikeLocations,
     PCAProjectionsByChannel,
     PCAProjectionsConcatenated,
-    UnitMetrics,
+    UnitsMetrics,
     ValidUnitPeriods,
     SpikeSortingExtensions,
     SpikeSortingContainer,
@@ -1369,12 +1369,12 @@ class TestAmplitudeScalingsRoundtrip(TestCase):
             )
 
 
-def create_mock_unit_metrics(nwbfile: NWBFile, num_units: int = 3, with_time_support: bool = True):
-    """Create a mock UnitMetrics with MetricVectorData columns.
+def create_mock_units_metrics(nwbfile: NWBFile, num_units: int = 3, with_time_support: bool = True):
+    """Create a mock UnitsMetrics with MetricVectorData columns.
 
     When ``with_time_support`` is True, a ValidUnitPeriods table is also built
     and each metric column gets its time_support attribute set to reference it.
-    Returns (unit_metrics, valid_unit_periods); the second value is None when
+    Returns (units_metrics, valid_unit_periods); the second value is None when
     ``with_time_support`` is False.
     """
     from ndx_spikesorting import MetricVectorData
@@ -1407,12 +1407,12 @@ def create_mock_unit_metrics(nwbfile: NWBFile, num_units: int = 3, with_time_sup
         _col("amplitude_cutoff", "Estimated fraction of spikes missed.", cutoff_data),
     ]
 
-    unit_metrics = UnitMetrics(
+    units_metrics = UnitsMetrics(
         name="quality_metrics",
         description="Run-dependent per-unit metrics from one analysis run.",
         columns=columns,
     )
-    return unit_metrics, vup
+    return units_metrics, vup
 
 
 def create_mock_valid_unit_periods(nwbfile: NWBFile, num_units: int = 3, periods_per_unit: int = 2):
@@ -1448,13 +1448,13 @@ def create_mock_valid_unit_periods(nwbfile: NWBFile, num_units: int = 3, periods
     return valid_unit_periods
 
 
-class TestUnitMetricsConstructor(TestCase):
-    """Unit tests for UnitMetrics constructor."""
+class TestUnitsMetricsConstructor(TestCase):
+    """Unit tests for UnitsMetrics constructor."""
 
     def test_constructor_without_intervals(self):
-        """UnitMetrics columns carry no time_support attribute when not requested."""
+        """UnitsMetrics columns carry no time_support attribute when not requested."""
         nwbfile = set_up_nwbfile()
-        run, vup = create_mock_unit_metrics(nwbfile, with_time_support=False)
+        run, vup = create_mock_units_metrics(nwbfile, with_time_support=False)
 
         self.assertEqual(run.name, "quality_metrics")
         self.assertIn("presence_ratio", run.colnames)
@@ -1469,36 +1469,36 @@ class TestUnitMetricsConstructor(TestCase):
     def test_constructor_with_intervals(self):
         """Each metric column references the same ValidUnitPeriods via time_support."""
         nwbfile = set_up_nwbfile()
-        run, vup = create_mock_unit_metrics(nwbfile, with_time_support=True)
+        run, vup = create_mock_units_metrics(nwbfile, with_time_support=True)
 
         self.assertIsNotNone(vup)
         for col_name in ("presence_ratio", "isi_violations_ratio", "amplitude_cutoff"):
             self.assertIs(run[col_name].time_support, vup)
 
 
-class TestUnitMetricsRoundtrip(TestCase):
-    """Roundtrip test for UnitMetrics."""
+class TestUnitsMetricsRoundtrip(TestCase):
+    """Roundtrip test for UnitsMetrics."""
 
     def setUp(self):
         self.nwbfile = set_up_nwbfile()
-        self.path = "test_unit_metrics.nwb"
+        self.path = "test_units_metrics.nwb"
 
     def tearDown(self):
         remove_test_file(self.path)
 
     def test_roundtrip(self):
-        """Test writing and reading a UnitMetrics instance with linked ValidUnitPeriods."""
+        """Test writing and reading a UnitsMetrics instance with linked ValidUnitPeriods."""
         electrodes_region = self.nwbfile.create_electrode_table_region(
             region=list(range(10)),
             description="all electrodes",
         )
         units_region = create_units_region(self.nwbfile)
 
-        run, vup = create_mock_unit_metrics(self.nwbfile, with_time_support=True)
+        run, vup = create_mock_units_metrics(self.nwbfile, with_time_support=True)
 
         extensions = SpikeSortingExtensions(name="extensions")
         extensions.valid_unit_periods = vup
-        extensions.add_unit_metrics(run)
+        extensions.add_units_metrics(run)
 
         container = SpikeSortingContainer(
             name="spike_sorting",
@@ -1521,7 +1521,7 @@ class TestUnitMetricsRoundtrip(TestCase):
             read_nwbfile = io.read()
             read_container = read_nwbfile.processing["ecephys"]["spike_sorting"]
             read_extensions = read_container.spike_sorting_extensions
-            read_run = read_extensions.unit_metrics["quality_metrics"]
+            read_run = read_extensions.units_metrics["quality_metrics"]
 
             np.testing.assert_array_almost_equal(
                 read_run["presence_ratio"][:], run["presence_ratio"].data
@@ -2056,7 +2056,7 @@ class TestReadSortingAnalyzerFromNwb(TestCase):
         """Extensions restored from the NWB file.
 
         Quality, template, and spiketrain metric columns all live on a
-        single UnitMetrics table on disk; the reader uses
+        single UnitsMetrics table on disk; the reader uses
         ``COLUMN_TO_EXTENSION`` to split them back into the right SI
         extensions on read. ``FiringRate`` is the only canonized typed
         column on Units in v1 (additional canonical columns are in
@@ -2168,14 +2168,14 @@ class TestReadSortingAnalyzerFromNwb(TestCase):
             }
             self.assertGreater(len(typed_columns), 0)
 
-    def test_unit_metrics_present(self):
-        """Run-dependent metrics land in a UnitMetrics instance inside extensions."""
+    def test_units_metrics_present(self):
+        """Run-dependent metrics land in a UnitsMetrics instance inside extensions."""
         from pynwb import NWBHDF5IO
 
         with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
             nwbfile = io.read()
             ext = nwbfile.processing["ecephys"]["spike_sorting"].spike_sorting_extensions
-            self.assertIn("quality_metrics", ext.unit_metrics)
+            self.assertIn("quality_metrics", ext.units_metrics)
 
     def test_metric_values_roundtrip(self):
         """Reconstructed SI metric extensions hold the same values."""
@@ -2199,7 +2199,7 @@ class TestReadSortingAnalyzerFromNwb(TestCase):
             )
 
     def test_template_metrics_roundtrip(self):
-        """template_metrics columns split out of UnitMetrics into the right SI extension."""
+        """template_metrics columns split out of UnitsMetrics into the right SI extension."""
         sa = self.read_fn(self.path)
 
         original_tm = self.sorting_analyzer.get_extension("template_metrics").get_data()
@@ -2218,7 +2218,7 @@ class TestReadSortingAnalyzerFromNwb(TestCase):
     def test_quality_and_template_metrics_separated_on_read(self):
         """quality_metrics and template_metrics extensions hold disjoint columns post-read.
 
-        Pre-fix, every column on UnitMetrics was funneled into quality_metrics,
+        Pre-fix, every column on UnitsMetrics was funneled into quality_metrics,
         which made template_metrics empty (or absent) and put template columns
         like ``peak_to_trough_duration`` under quality_metrics.
         """
@@ -2264,7 +2264,7 @@ class TestReadSortingAnalyzerFromNwb(TestCase):
         )
 
 
-class TestUnitMetricsTimeSupportLinkRoundtrip(TestCase):
+class TestUnitsMetricsTimeSupportLinkRoundtrip(TestCase):
     """Round-trip the time_support column-attribute link through a SortingAnalyzer.
 
     Exercises three properties that the column-attribute design has to satisfy:
@@ -2308,7 +2308,7 @@ class TestUnitMetricsTimeSupportLinkRoundtrip(TestCase):
             {"quality_metrics": {"periods": self.periods_arr, "metric_names": ["firing_rate", "presence_ratio"]}}
         )
 
-        self.path = "test_unit_metrics_time_support_link.nwb"
+        self.path = "test_units_metrics_time_support_link.nwb"
 
     def tearDown(self):
         remove_test_file(self.path)
@@ -2337,7 +2337,7 @@ class TestUnitMetricsTimeSupportLinkRoundtrip(TestCase):
 
         # In-memory: metric columns carry the link and the standalone table exists.
         ext = nwbfile.processing["ecephys"]["spike_sorting"].spike_sorting_extensions
-        um = ext.unit_metrics["quality_metrics"]
+        um = ext.units_metrics["quality_metrics"]
         self.assertIsNotNone(um["presence_ratio"].time_support)
         self.assertIsNotNone(ext.valid_unit_periods)
         # No legacy inline column.
@@ -2423,6 +2423,6 @@ class TestUnitMetricsTimeSupportLinkRoundtrip(TestCase):
         add_sorting_analyzer_to_nwbfile(self.sorting_analyzer, nwbfile)
 
         ext = nwbfile.processing["ecephys"]["spike_sorting"].spike_sorting_extensions
-        um = ext.unit_metrics["quality_metrics"]
+        um = ext.units_metrics["quality_metrics"]
         self.assertIsNone(getattr(um["firing_rate"], "time_support", None))
         self.assertIsNone(ext.valid_unit_periods)

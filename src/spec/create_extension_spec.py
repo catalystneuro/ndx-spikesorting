@@ -558,7 +558,7 @@ def main():
     # Canonical typed VectorData column classes
     # ------------------------------------------------------------------
     # These are stand-alone VectorData subtypes that the writer adds to either
-    # nwbfile.units (cell-intrinsic properties) or UnitMetrics instances
+    # nwbfile.units (cell-intrinsic properties) or UnitsMetrics instances
     # (run-dependent properties). The split is by what the value is, not by what
     # it is used for: cell-intrinsic values estimate biological properties and
     # are stable across reasonable analyses; run-dependent values describe the
@@ -607,10 +607,10 @@ def main():
         ],
     )
 
-    unit_metrics = NWBGroupSpec(
-        neurodata_type_def="UnitMetrics",
+    units_metrics = NWBGroupSpec(
+        neurodata_type_def="UnitsMetrics",
         neurodata_type_inc="DynamicTable",
-        default_name="unit_metrics",
+        default_name="units_metrics",
         doc=(
             "Per-unit metric values from one analysis run. Each row is one unit; "
             "columns are metric values, typed as MetricVectorData so they can carry "
@@ -625,7 +625,7 @@ def main():
                 neurodata_type_inc="DynamicTableRegion",
                 doc=(
                     "Reference to the row in nwbfile.units that each row of this "
-                    "UnitMetrics describes."
+                    "UnitsMetrics describes."
                 ),
             ),
         ],
@@ -730,7 +730,7 @@ def main():
                 doc="Concatenated-channels PCA projections of spikes (single-ragged).",
             ),
             NWBGroupSpec(
-                neurodata_type_inc="UnitMetrics",
+                neurodata_type_inc="UnitsMetrics",
                 quantity="*",
                 doc=(
                     "Per-unit metrics from one analysis run. Multiple instances "
@@ -828,7 +828,7 @@ def main():
         firing_rate,
         valid_unit_periods,
         metric_vector_data,
-        unit_metrics,
+        units_metrics,
         spike_sorting_extensions,
         spike_sorting_container,
     ]
