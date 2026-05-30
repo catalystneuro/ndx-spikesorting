@@ -32,13 +32,13 @@ PCAProjectionsConcatenated = get_class("PCAProjectionsConcatenated", "ndx-spikes
 FiringRate = get_class("FiringRate", "ndx-spikesorting")
 
 # Typed VectorData carrying an optional time_support reference attribute
-MetricVectorData = get_class("MetricVectorData", "ndx-spikesorting")
+UnitVectorData = get_class("UnitVectorData", "ndx-spikesorting")
 
 ValidUnitPeriods = get_class("ValidUnitPeriods", "ndx-spikesorting")
 
 # Multi-instance container for run-dependent metrics. We override add_column on
 # the auto-generated class so that columns added by users default to
-# MetricVectorData (carrying the optional time_support reference) without
+# UnitVectorData (carrying the optional time_support reference) without
 # having to pass col_cls explicitly. The `unit` DynamicTableRegion is left
 # alone. The subclass is re-registered as the canonical class for the
 # neurodata_type so it's used on read as well as write.
@@ -50,14 +50,14 @@ class UnitsMetrics(_AutoUnitsMetrics):
     """UnitsMetrics with a metric-aware ``add_column`` default.
 
     When ``col_cls`` is not provided and the column being added is not the
-    ``unit`` DynamicTableRegion, columns default to ``MetricVectorData`` so
+    ``unit`` DynamicTableRegion, columns default to ``UnitVectorData`` so
     they can carry the optional ``time_support`` reference. Pass
     ``col_cls=VectorData`` explicitly to opt out for a particular column.
     """
 
     def add_column(self, **kwargs):
         if kwargs.get("col_cls") is None and kwargs.get("name") != "unit":
-            kwargs["col_cls"] = MetricVectorData
+            kwargs["col_cls"] = UnitVectorData
         return super().add_column(**kwargs)
 
 SpikeSortingExtensions = get_class("SpikeSortingExtensions", "ndx-spikesorting")
@@ -80,7 +80,7 @@ __all__ = [
     "PCAProjectionsByChannel",
     "PCAProjectionsConcatenated",
     "FiringRate",
-    "MetricVectorData",
+    "UnitVectorData",
     "UnitsMetrics",
     "ValidUnitPeriods",
     "SpikeSortingExtensions",

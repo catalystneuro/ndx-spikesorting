@@ -585,23 +585,27 @@ def main():
         ],
     )
 
-    metric_vector_data = NWBDatasetSpec(
-        neurodata_type_def="MetricVectorData",
+    unit_vector_data = NWBDatasetSpec(
+        neurodata_type_def="UnitVectorData",
         neurodata_type_inc="VectorData",
         doc=(
-            "A VectorData column carrying a run-dependent per-unit metric. May "
-            "reference the TimeIntervals (typically ValidUnitPeriods) over which "
-            "its values were computed, via the optional `time_support` attribute."
+            "A VectorData column carrying per-unit values. May reference the "
+            "TimeIntervals over which the values were computed, via the optional "
+            "`time_support` attribute. Used as the column type for run-dependent "
+            "metric values on UnitsMetrics; also suitable for cell-intrinsic "
+            "typed columns on the Units table."
         ),
         attributes=[
             NWBAttributeSpec(
                 name="time_support",
                 doc=(
-                    "Object reference to the TimeIntervals (typically "
-                    "ValidUnitPeriods) over which this column's metric values "
-                    "were computed. Absent when no time restriction was applied."
+                    "Object reference to the TimeIntervals (plain or a "
+                    "ValidUnitPeriods subclass) over which this column's values "
+                    "were computed. Absent when no time restriction was applied "
+                    "(e.g., for metrics whose computation does not respect "
+                    "per-unit periods)."
                 ),
-                dtype=NWBRefSpec(target_type="ValidUnitPeriods", reftype="object"),
+                dtype=NWBRefSpec(target_type="TimeIntervals", reftype="object"),
                 required=False,
             ),
         ],
@@ -613,7 +617,7 @@ def main():
         default_name="units_metrics",
         doc=(
             "Per-unit metric values from one analysis run. Each row is one unit; "
-            "columns are metric values, typed as MetricVectorData so they can carry "
+            "columns are metric values, typed as UnitVectorData so they can carry "
             "an optional reference to the TimeIntervals over which they were "
             "computed. The required `unit` DynamicTableRegion references the "
             "corresponding row in nwbfile.units. Multiple instances coexist under "
@@ -739,8 +743,23 @@ def main():
             ),
             NWBGroupSpec(
                 neurodata_type_inc="ValidUnitPeriods",
-                quantity="?",
-                doc="Valid unit periods extension data.",
+                quantity="*",
+                doc=(
+                    "Valid time periods per unit from spike sorting quality "
+                    "estimation. Multiple instances may coexist when different "
+                    "analysis parameter sets produce different validity tables."
+                ),
+            ),
+            NWBGroupSpec(
+                neurodata_type_inc="TimeIntervals",
+                quantity="*",
+                doc=(
+                    "Plain NWB-core TimeIntervals tables, used for metric "
+                    "time-support windows when those windows did not come from a "
+                    "validity computation (e.g., user-defined periods passed "
+                    "directly to quality_metrics). Each row has start_time, "
+                    "stop_time, and a `unit` DynamicTableRegion column."
+                ),
             ),
         ],
     )
@@ -827,7 +846,7 @@ def main():
         pca_projections_concatenated,
         firing_rate,
         valid_unit_periods,
-        metric_vector_data,
+        unit_vector_data,
         units_metrics,
         spike_sorting_extensions,
         spike_sorting_container,

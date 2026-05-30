@@ -1370,14 +1370,14 @@ class TestAmplitudeScalingsRoundtrip(TestCase):
 
 
 def create_mock_units_metrics(nwbfile: NWBFile, num_units: int = 3, with_time_support: bool = True):
-    """Create a mock UnitsMetrics with MetricVectorData columns.
+    """Create a mock UnitsMetrics with UnitVectorData columns.
 
     When ``with_time_support`` is True, a ValidUnitPeriods table is also built
     and each metric column gets its time_support attribute set to reference it.
     Returns (units_metrics, valid_unit_periods); the second value is None when
     ``with_time_support`` is False.
     """
-    from ndx_spikesorting import MetricVectorData
+    from ndx_spikesorting import UnitVectorData
 
     unit_column = DynamicTableRegion(
         name="unit",
@@ -1398,7 +1398,7 @@ def create_mock_units_metrics(nwbfile: NWBFile, num_units: int = 3, with_time_su
         kwargs = dict(name=name, description=description, data=data)
         if vup is not None:
             kwargs["time_support"] = vup
-        return MetricVectorData(**kwargs)
+        return UnitVectorData(**kwargs)
 
     columns = [
         unit_column,
@@ -1497,7 +1497,7 @@ class TestUnitsMetricsRoundtrip(TestCase):
         run, vup = create_mock_units_metrics(self.nwbfile, with_time_support=True)
 
         extensions = SpikeSortingExtensions(name="extensions")
-        extensions.valid_unit_periods = vup
+        extensions.add_valid_unit_periods(vup)
         extensions.add_units_metrics(run)
 
         container = SpikeSortingContainer(
@@ -1575,7 +1575,7 @@ class TestValidUnitPeriodsRoundtrip(TestCase):
         valid_periods = create_mock_valid_unit_periods(self.nwbfile)
 
         extensions = SpikeSortingExtensions(name="extensions")
-        extensions.valid_unit_periods = valid_periods
+        extensions.add_valid_unit_periods(valid_periods)
 
         container = SpikeSortingContainer(
             name="spike_sorting",
@@ -1598,7 +1598,7 @@ class TestValidUnitPeriodsRoundtrip(TestCase):
             read_nwbfile = io.read()
             read_container = read_nwbfile.processing["ecephys"]["spike_sorting"]
             read_extensions = read_container.spike_sorting_extensions
-            read_valid_periods = read_extensions.valid_unit_periods
+            read_valid_periods = read_extensions.valid_unit_periods["valid_unit_periods"]
 
             np.testing.assert_array_almost_equal(
                 read_valid_periods["start_time"][:],
@@ -2425,4 +2425,100 @@ class TestUnitsMetricsTimeSupportLinkRoundtrip(TestCase):
         ext = nwbfile.processing["ecephys"]["spike_sorting"].spike_sorting_extensions
         um = ext.units_metrics["quality_metrics"]
         self.assertIsNone(getattr(um["firing_rate"], "time_support", None))
-        self.assertIsNone(ext.valid_unit_periods)
+        self.assertEqual(len(ext.valid_unit_periods), 0)
+
+    def test_qm_periods_without_si_extension_writes_plain_time_intervals(self):
+        """qm.params['periods'] set, no SI valid_unit_periods → plain TimeIntervals, no ValidUnitPeriods."""
+        from ndx_spikesorting import add_sorting_analyzer_to_nwbfile, read_sorting_analyzer_from_nwb
+
+        # Re-compute quality_metrics with custom periods (no SI valid_unit_periods extension).
+        self.sorting_analyzer.compute(
+            {"quality_metrics": {
+                "periods": self.periods_arr,
+                "metric_names": ["firing_rate", "presence_ratio"],
+                "delete_existing_metrics": True,
+            }}
+        )
+
+        nwbfile = self._build_nwbfile()
+        add_sorting_analyzer_to_nwbfile(self.sorting_analyzer, nwbfile)
+
+        ext = nwbfile.processing["ecephys"]["spike_sorting"].spike_sorting_extensions
+        self.assertEqual(len(ext.valid_unit_periods), 0)
+        self.assertEqual(len(ext.time_intervals), 1)
+        self.assertIn("quality_metrics_time_support", ext.time_intervals)
+
+        um = ext.units_metrics["quality_metrics"]
+        ts = um["firing_rate"].time_support
+        self.assertIsNotNone(ts)
+        # Should NOT be a ValidUnitPeriods (no SI extension); should be a plain TimeIntervals.
+        from ndx_spikesorting import ValidUnitPeriods
+        self.assertNotIsInstance(ts, ValidUnitPeriods)
+
+        with NWBHDF5IO(self.path, "w") as io:
+            io.write(nwbfile)
+        sa2 = read_sorting_analyzer_from_nwb(self.path)
+        p2 = sa2.get_extension("quality_metrics").params.get("periods")
+        self.assertIsNotNone(p2)
+        self.assertEqual(len(p2), len(self.periods_arr))
+
+    def test_supports_periods_filter_excludes_non_period_metrics(self):
+        """Metrics with supports_periods=False (e.g. snr) don't get a time_support link."""
+        from ndx_spikesorting import add_sorting_analyzer_to_nwbfile
+
+        # Recompute qm with a mix: firing_rate (supports_periods=True), snr (False).
+        self.sorting_analyzer.compute(
+            {"quality_metrics": {
+                "periods": self.periods_arr,
+                "metric_names": ["firing_rate", "snr"],
+                "delete_existing_metrics": True,
+            }}
+        )
+
+        nwbfile = self._build_nwbfile()
+        add_sorting_analyzer_to_nwbfile(self.sorting_analyzer, nwbfile)
+
+        ext = nwbfile.processing["ecephys"]["spike_sorting"].spike_sorting_extensions
+        um = ext.units_metrics["quality_metrics"]
+
+        # firing_rate should have a time_support link (supports_periods=True)
+        self.assertIsNotNone(um["firing_rate"].time_support)
+        # snr should not (supports_periods=False — value doesn't depend on periods)
+        self.assertIsNone(um["snr"].time_support)
+
+    def test_diverging_qm_periods_and_si_extension_write_both_tables(self):
+        """qm has different periods than SI ext → both tables written; columns link to qm-derived."""
+        from ndx_spikesorting import add_sorting_analyzer_to_nwbfile
+
+        fs = self.sorting_analyzer.sampling_frequency
+        # SI extension with one set of windows
+        si_periods = np.array(
+            [(0, 0, int(2.0 * fs), u) for u in range(3)], dtype=self.unit_period_dtype
+        )
+        self.sorting_analyzer.compute({"valid_unit_periods": {
+            "method": "user_defined",
+            "user_defined_periods": si_periods,
+            "minimum_valid_period_duration": 0,
+        }})
+        # qm with DIFFERENT periods (covers more of the recording)
+        qm_periods = np.array(
+            [(0, 0, int(4.5 * fs), u) for u in range(3)], dtype=self.unit_period_dtype
+        )
+        self.sorting_analyzer.compute({"quality_metrics": {
+            "periods": qm_periods,
+            "metric_names": ["firing_rate"],
+            "delete_existing_metrics": True,
+        }})
+
+        nwbfile = self._build_nwbfile()
+        add_sorting_analyzer_to_nwbfile(self.sorting_analyzer, nwbfile)
+
+        ext = nwbfile.processing["ecephys"]["spike_sorting"].spike_sorting_extensions
+        # Both tables written
+        self.assertEqual(len(ext.valid_unit_periods), 1)
+        self.assertEqual(len(ext.time_intervals), 1)
+
+        # Metric column links to the qm-derived TimeIntervals, not the ValidUnitPeriods
+        um = ext.units_metrics["quality_metrics"]
+        from ndx_spikesorting import ValidUnitPeriods
+        self.assertNotIsInstance(um["firing_rate"].time_support, ValidUnitPeriods)
