@@ -2056,8 +2056,8 @@ class TestReadSortingAnalyzerFromNwb(TestCase):
         """Extensions restored from the NWB file.
 
         Quality, template, and spiketrain metric columns all live on a
-        single UnitsMetrics table on disk; the reader uses
-        ``COLUMN_TO_EXTENSION`` to split them back into the right SI
+        single UnitsMetrics table on disk; the reader uses metric names
+        to split them back into the right SI
         extensions on read. ``FiringRate`` is the only canonized typed
         column on Units in v1 (additional canonical columns are in
         follow-up PRs); it routes to ``spiketrain_metrics``.
@@ -2175,7 +2175,7 @@ class TestReadSortingAnalyzerFromNwb(TestCase):
         with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
             nwbfile = io.read()
             ext = nwbfile.processing["ecephys"]["spike_sorting"].spike_sorting_extensions
-            self.assertIn("quality_metrics", ext.units_metrics)
+            self.assertIn("unit_metrics", ext.units_metrics)
 
     def test_metric_values_roundtrip(self):
         """Reconstructed SI metric extensions hold the same values."""
@@ -2235,34 +2235,6 @@ class TestReadSortingAnalyzerFromNwb(TestCase):
         leaked = {"presence_ratio", "isi_violations_ratio"} & tm_cols
         self.assertEqual(leaked, set(), f"quality columns leaked into template_metrics: {leaked}")
 
-    def test_column_to_extension_covers_all_computed_columns(self):
-        """COLUMN_TO_EXTENSION covers every column produced by the SI extensions
-        we compute in the fixture.
-
-        Acts as a guard: if SI adds a new column in a release, the test fails
-        with a clear message naming the uncovered column. Update
-        ``COLUMN_TO_EXTENSION`` in ``utils.py`` to silence.
-        """
-        from ndx_spikesorting.utils import COLUMN_TO_EXTENSION
-
-        uncovered = []
-        for ext_name in ("template_metrics", "quality_metrics", "spiketrain_metrics"):
-            ext = self.sorting_analyzer.get_extension(ext_name)
-            if ext is None:
-                continue
-            df_cols = ext.get_data().columns
-            for col in df_cols:
-                if col not in COLUMN_TO_EXTENSION:
-                    uncovered.append((ext_name, col))
-
-        self.assertEqual(
-            uncovered,
-            [],
-            "Columns produced by SpikeInterface (SI) but missing from "
-            f"COLUMN_TO_EXTENSION: {uncovered}. Add them to the dict in "
-            "src/pynwb/ndx_spikesorting/utils.py.",
-        )
-
 
 class TestUnitsMetricsTimeSupportLinkRoundtrip(TestCase):
     """Round-trip the time_support column-attribute link through a SortingAnalyzer.
@@ -2305,7 +2277,14 @@ class TestUnitsMetricsTimeSupportLinkRoundtrip(TestCase):
             periods.append((0, int(2.0 * fs), int(4.5 * fs), u))
         self.periods_arr = np.array(periods, dtype=unit_period_dtype)
         self.sorting_analyzer.compute(
-            {"quality_metrics": {"periods": self.periods_arr, "metric_names": ["firing_rate", "presence_ratio"]}}
+            {
+                "quality_metrics": 
+                    {
+                        "periods": self.periods_arr,
+                        "metric_names": ["firing_rate", "presence_ratio"],
+                        "metric_params": {"presence_ratio": {"bin_duration_s": 1.0}}
+                    }
+            }
         )
 
         self.path = "test_units_metrics_time_support_link.nwb"
@@ -2337,7 +2316,7 @@ class TestUnitsMetricsTimeSupportLinkRoundtrip(TestCase):
 
         # In-memory: metric columns carry the link and the standalone table exists.
         ext = nwbfile.processing["ecephys"]["spike_sorting"].spike_sorting_extensions
-        um = ext.units_metrics["quality_metrics"]
+        um = ext.units_metrics["unit_metrics"]
         self.assertIsNotNone(um["presence_ratio"].time_support)
         self.assertIsNotNone(ext.valid_unit_periods)
         # No legacy inline column.
@@ -2416,15 +2395,15 @@ class TestUnitsMetricsTimeSupportLinkRoundtrip(TestCase):
 
         # Re-compute quality_metrics without periods.
         self.sorting_analyzer.compute(
-            {"quality_metrics": {"metric_names": ["firing_rate"], "delete_existing_metrics": True}}
+            {"quality_metrics": {"metric_names": ["presence_ratio"], "delete_existing_metrics": True}}
         )
 
         nwbfile = self._build_nwbfile()
         add_sorting_analyzer_to_nwbfile(self.sorting_analyzer, nwbfile)
 
         ext = nwbfile.processing["ecephys"]["spike_sorting"].spike_sorting_extensions
-        um = ext.units_metrics["quality_metrics"]
-        self.assertIsNone(getattr(um["firing_rate"], "time_support", None))
+        um = ext.units_metrics["unit_metrics"]
+        self.assertIsNone(getattr(um["presence_ratio"], "time_support", None))
         self.assertEqual(len(ext.valid_unit_periods), 0)
 
     def test_qm_periods_without_si_extension_writes_plain_time_intervals(self):
@@ -2435,7 +2414,7 @@ class TestUnitsMetricsTimeSupportLinkRoundtrip(TestCase):
         self.sorting_analyzer.compute(
             {"quality_metrics": {
                 "periods": self.periods_arr,
-                "metric_names": ["firing_rate", "presence_ratio"],
+                "metric_names": ["presence_ratio"],
                 "delete_existing_metrics": True,
             }}
         )
@@ -2446,10 +2425,10 @@ class TestUnitsMetricsTimeSupportLinkRoundtrip(TestCase):
         ext = nwbfile.processing["ecephys"]["spike_sorting"].spike_sorting_extensions
         self.assertEqual(len(ext.valid_unit_periods), 0)
         self.assertEqual(len(ext.time_intervals), 1)
-        self.assertIn("quality_metrics_time_support", ext.time_intervals)
+        self.assertIn("unit_metrics_time_support", ext.time_intervals)
 
-        um = ext.units_metrics["quality_metrics"]
-        ts = um["firing_rate"].time_support
+        um = ext.units_metrics["unit_metrics"]
+        ts = um["presence_ratio"].time_support
         self.assertIsNotNone(ts)
         # Should NOT be a ValidUnitPeriods (no SI extension); should be a plain TimeIntervals.
         from ndx_spikesorting import ValidUnitPeriods
@@ -2470,7 +2449,7 @@ class TestUnitsMetricsTimeSupportLinkRoundtrip(TestCase):
         self.sorting_analyzer.compute(
             {"quality_metrics": {
                 "periods": self.periods_arr,
-                "metric_names": ["firing_rate", "snr"],
+                "metric_names": ["presence_ratio", "snr"],
                 "delete_existing_metrics": True,
             }}
         )
@@ -2479,10 +2458,10 @@ class TestUnitsMetricsTimeSupportLinkRoundtrip(TestCase):
         add_sorting_analyzer_to_nwbfile(self.sorting_analyzer, nwbfile)
 
         ext = nwbfile.processing["ecephys"]["spike_sorting"].spike_sorting_extensions
-        um = ext.units_metrics["quality_metrics"]
+        um = ext.units_metrics["unit_metrics"]
 
-        # firing_rate should have a time_support link (supports_periods=True)
-        self.assertIsNotNone(um["firing_rate"].time_support)
+        # presence_ratio should have a time_support link (supports_periods=True)
+        self.assertIsNotNone(um["presence_ratio"].time_support)
         # snr should not (supports_periods=False — value doesn't depend on periods)
         self.assertIsNone(um["snr"].time_support)
 
@@ -2506,7 +2485,7 @@ class TestUnitsMetricsTimeSupportLinkRoundtrip(TestCase):
         )
         self.sorting_analyzer.compute({"quality_metrics": {
             "periods": qm_periods,
-            "metric_names": ["firing_rate"],
+            "metric_names": ["presence_ratio"],
             "delete_existing_metrics": True,
         }})
 
@@ -2519,6 +2498,6 @@ class TestUnitsMetricsTimeSupportLinkRoundtrip(TestCase):
         self.assertEqual(len(ext.time_intervals), 1)
 
         # Metric column links to the qm-derived TimeIntervals, not the ValidUnitPeriods
-        um = ext.units_metrics["quality_metrics"]
+        um = ext.units_metrics["unit_metrics"]
         from ndx_spikesorting import ValidUnitPeriods
-        self.assertNotIsInstance(um["firing_rate"].time_support, ValidUnitPeriods)
+        self.assertNotIsInstance(um["presence_ratio"].time_support, ValidUnitPeriods)

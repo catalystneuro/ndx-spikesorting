@@ -52,7 +52,6 @@ sorting_analyzer.compute(
         "spike_amplitudes": {},
         "amplitude_scalings": {},
         "spike_locations": {"method": "grid_convolution"},
-        "quality_metrics": {},
         "template_metrics": {},
         "spiketrain_metrics": {},
     }
@@ -86,6 +85,34 @@ sorting_analyzer.compute(
     user_defined_periods=user_defined_periods,
     minimum_valid_period_duration=0,
 )
+
+# # Option 1: compute metrics with no valid periods
+# sorting_analyzer.compute(
+#     "quality_metrics",
+#     use_valid_periods=False
+# )
+
+# Option 2: compute QC with valid unit periods
+sorting_analyzer.compute(
+    "quality_metrics",
+    use_valid_periods=True
+)
+
+# # Option 3: compute QC with another time support (use 0-3 for all units)
+# qm_user_defined_periods = np.array([], dtype=unit_period_dtype)
+# for unit_index in range(num_units):
+#     # First valid period: 0s–3s
+#     qm_user_defined_periods = np.append(
+#         qm_user_defined_periods,
+#         np.array(
+#             [(0, int(0), int(3.0 * sampling_frequency), unit_index)],
+#             dtype=unit_period_dtype)
+#         )
+# sorting_analyzer.compute(
+#     "quality_metrics",
+#     periods=qm_user_defined_periods
+# )
+
 
 # ---- Step 2: Create the base NWB file with recording and sorting via neuroconv ----
 
