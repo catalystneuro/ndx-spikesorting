@@ -2368,7 +2368,6 @@ class TestUnitsMetricsTimeSupportLinkRoundtrip(TestCase):
                     continue
                 expected = original_qm.loc[unit_id, col]
                 got = restored_qm.loc[uid, col] if uid in restored_qm.index else restored_qm.loc[unit_id, col]
-                print(f"Unit {unit_id}, column {col}: expected {expected}, got {got}")
                 if not np.isnan(expected):
                     self.assertAlmostEqual(expected, got, places=5)
 

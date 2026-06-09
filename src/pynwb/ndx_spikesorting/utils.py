@@ -381,6 +381,8 @@ def _add_cell_intrinsic_columns_to_units(
         )
 
     all_metrics = sorting_analyzer.get_metrics_extension_data()
+    # remove dulpicate columns until SI 0.105.0 is released with a bugfix #4609
+    all_metrics = all_metrics.loc[:, ~all_metrics.columns.duplicated()]
     ns_catalog = get_type_map().namespace_catalog
     row_indices = _analyzer_unit_positions_to_units_rows(sorting_analyzer, nwbfile.units)
     for metric_name, col_cls in UNITS_TYPED_COLUMNS.items():
@@ -1365,7 +1367,10 @@ def _load_cell_intrinsic_from_units(units_table, sorting_analyzer: "SortingAnaly
         col = units_table[col_name]
         for metric_name, col_cls in UNITS_TYPED_COLUMNS.items():
             if isinstance(col, col_cls):
-                reordered_values = np.asarray(col.data[:])[reorder]
+                raw_values = np.asarray(col.data[:])
+                if raw_values.ndim > 1:
+                    raw_values = raw_values[:, 0]
+                reordered_values = raw_values[reorder]
                 target_extensions = find_extension_metric_targets(metric_name)
                 for si_ext_name in target_extensions:
                     metric_ext = sorting_analyzer.extensions.get(si_ext_name)
