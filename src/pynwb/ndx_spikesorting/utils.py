@@ -7,6 +7,7 @@ import numpy as np
 
 from hdmf.common import VectorData, VectorIndex, DynamicTableRegion
 from pynwb import NWBFile
+from pynwb import get_type_map
 from pynwb.ecephys import ElectricalSeries
 from pynwb.epoch import TimeIntervals
 
@@ -381,12 +382,13 @@ def _add_cell_intrinsic_columns_to_units(
         )
 
     all_metrics = sorting_analyzer.get_metrics_extension_data()
+    ns_catalog = get_type_map().namespace_catalog
     for metric_name, col_cls in UNITS_TYPED_COLUMNS.items():
         if metric_name in all_metrics.columns:
-            # TODO: fix col_cls.__doc__ (which is empty)
+            spec = ns_catalog.get_spec("ndx-spikesorting", col_cls.__name__)
             nwbfile.units.add_column(
                 name=metric_name,
-                description=col_cls.__doc__ or metric_name,
+                description=spec.doc,
                 data=all_metrics[metric_name].to_numpy(),
                 col_cls=col_cls,
             )
