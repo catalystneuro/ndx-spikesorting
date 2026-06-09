@@ -12,7 +12,6 @@ from pynwb.ecephys import ElectricalSeries
 from pynwb.epoch import TimeIntervals
 
 if TYPE_CHECKING:
-    import pandas as pd
     from spikeinterface.core import SortingAnalyzer
 
 from ndx_spikesorting import (
@@ -1350,7 +1349,6 @@ def _load_cell_intrinsic_from_units(units_table, sorting_analyzer: "SortingAnaly
     import pandas as pd
     from spikeinterface.core.sortinganalyzer import get_extension_class
 
-    per_extension_columns: dict[str, dict[str, np.ndarray]] = {}
     for col_name in units_table.colnames:
         col = units_table[col_name]
         for metric_name, col_cls in UNITS_TYPED_COLUMNS.items():
@@ -1393,8 +1391,6 @@ def _collect_units_metrics_columns(nwb_table, sorting_analyzer):
     aligned with ``sorting_analyzer.unit_ids`` regardless of whether the on-disk
     row order matches.
     """
-    import warnings
-
     row_to_analyzer_pos = _dtr_rows_to_analyzer_positions(nwb_table["unit"], sorting_analyzer)
     # Permutation that places UnitsMetrics row i's value at the slot corresponding
     # to its analyzer unit position in the output array.
