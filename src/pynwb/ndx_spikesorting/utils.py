@@ -576,6 +576,9 @@ def _convert_units_metrics(
     """
     df = sorting_analyzer.get_metrics_extension_data()
 
+    # We need this until SI 0.105.0 is release (with a bugfix #4609)
+    df = df.loc[:, ~df.columns.duplicated()]
+
     # Per-row unit DTR pointing back to nwbfile.units (one row per unit). We
     # resolve each analyzer unit_id to a nwbfile.units row index by identity
     # rather than position, so the DTR stays correct even if nwbfile.units is
