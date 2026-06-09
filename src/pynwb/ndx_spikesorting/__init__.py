@@ -27,7 +27,38 @@ SpikeLocations = get_class("SpikeLocations", "ndx-spikesorting")
 AmplitudeScalings = get_class("AmplitudeScalings", "ndx-spikesorting")
 PCAProjectionsByChannel = get_class("PCAProjectionsByChannel", "ndx-spikesorting")
 PCAProjectionsConcatenated = get_class("PCAProjectionsConcatenated", "ndx-spikesorting")
+
+# Canonical typed VectorData column for nwbfile.units
+FiringRate = get_class("FiringRate", "ndx-spikesorting")
+
+# Typed VectorData carrying an optional time_support reference attribute
+UnitVectorData = get_class("UnitVectorData", "ndx-spikesorting")
+
 ValidUnitPeriods = get_class("ValidUnitPeriods", "ndx-spikesorting")
+
+# Multi-instance container for run-dependent metrics. We override add_column on
+# the auto-generated class so that columns added by users default to
+# UnitVectorData (carrying the optional time_support reference) without
+# having to pass col_cls explicitly. The `unit` DynamicTableRegion is left
+# alone. The subclass is re-registered as the canonical class for the
+# neurodata_type so it's used on read as well as write.
+_AutoUnitsMetrics = get_class("UnitsMetrics", "ndx-spikesorting")
+
+
+@register_class("UnitsMetrics", "ndx-spikesorting")
+class UnitsMetrics(_AutoUnitsMetrics):
+    """UnitsMetrics with a metric-aware ``add_column`` default.
+
+    When ``col_cls`` is not provided and the column being added is not the
+    ``unit`` DynamicTableRegion, columns default to ``UnitVectorData`` so
+    they can carry the optional ``time_support`` reference. Pass
+    ``col_cls=VectorData`` explicitly to opt out for a particular column.
+    """
+
+    def add_column(self, **kwargs):
+        if kwargs.get("col_cls") is None and kwargs.get("name") != "unit":
+            kwargs["col_cls"] = UnitVectorData
+        return super().add_column(**kwargs)
 
 SpikeSortingExtensions = get_class("SpikeSortingExtensions", "ndx-spikesorting")
 SpikeSortingContainer = get_class("SpikeSortingContainer", "ndx-spikesorting")
@@ -48,6 +79,9 @@ __all__ = [
     "AmplitudeScalings",
     "PCAProjectionsByChannel",
     "PCAProjectionsConcatenated",
+    "FiringRate",
+    "UnitVectorData",
+    "UnitsMetrics",
     "ValidUnitPeriods",
     "SpikeSortingExtensions",
     "SpikeSortingContainer",
