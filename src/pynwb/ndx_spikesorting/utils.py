@@ -36,90 +36,28 @@ from ndx_spikesorting import (
     SpikeSortingContainer,
 )
 
-# Registries mapping canonical typed VectorData classes to
-# (si_metric_name, si_extension_name). The writer uses col_cls=<class> when
-# adding a column whose class appears here; other columns are written as plain
-# VectorData with the name preserved. The registries are the single point of
-# SpikeInterface-specific knowledge in the loader; the spec stays tool-agnostic.
 
+def find_extension_metric_targets(col_name: str) -> tuple[str, ...]:
+    """Return the SI extension(s) a given metric column belongs to, based on COLUMN_TO_EXTENSION."""
+    from spikeinterface.metrics import ComputeQualityMetrics, ComputeSpikeTrainMetrics, ComputeTemplateMetrics
+
+    extension_targets = ()
+    for potential_target in [
+        ComputeQualityMetrics,
+        ComputeSpikeTrainMetrics,
+        ComputeTemplateMetrics,
+    ]:
+        if col_name in potential_target.get_metric_columns():
+            extension_targets += (potential_target.extension_name,)
+    return extension_targets
+
+# Registries mapping canonical metric names to typed VectorData classes.
+# The writer uses col_cls=<class> when adding a column whose class appears here;
+# other columns are written as plain VectorData with the name preserved. 
+# The registries are the single point of SpikeInterface-specific knowledge in the loader; 
+# the spec stays tool-agnostic.
 UNITS_TYPED_COLUMNS = {
-    FiringRate: ("firing_rate", "spiketrain_metrics"),
-}
-
-UNITS_METRICS_TYPED_COLUMNS: dict = {}
-
-# Hard-coded routing of UnitsMetrics column names back into SpikeInterface (SI)
-# extension keys for the reader. The NWB file itself does not carry any
-# SI-specific tag on these columns; this dict is the only place where the
-# reader expresses "column X belongs to SI extension Y". Sourced from
-# ``spikeinterface.metrics.get_template_metric_list``,
-# ``get_quality_metric_list``, ``get_spiketrain_metric_list`` as of
-# SpikeInterface 0.104. Update when SI adds a new column. The dict-currency
-# guard test asserts that every column SI produces is covered here.
-#
-# Some columns (``num_spikes``, ``firing_rate``) are produced by multiple
-# SI extensions; we list every target so the reader replicates the column
-# value across each target extension. The reader merges values into existing
-# extension DataFrames when one was already populated by an earlier loader
-# step (typically the typed-column route via UNITS_TYPED_COLUMNS).
-COLUMN_TO_EXTENSION: dict[str, tuple[str, ...]] = {
-    # template_metrics (waveform morphology)
-    "peak_to_trough_duration": ("template_metrics",),
-    "trough_half_width": ("template_metrics",),
-    "peak_half_width": ("template_metrics",),
-    "repolarization_slope": ("template_metrics",),
-    "recovery_slope": ("template_metrics",),
-    "num_positive_peaks": ("template_metrics",),
-    "num_negative_peaks": ("template_metrics",),
-    "main_to_next_extremum_duration": ("template_metrics",),
-    "peak_before_to_trough_ratio": ("template_metrics",),
-    "peak_after_to_trough_ratio": ("template_metrics",),
-    "peak_before_to_peak_after_ratio": ("template_metrics",),
-    "main_peak_to_trough_ratio": ("template_metrics",),
-    "trough_width": ("template_metrics",),
-    "peak_before_width": ("template_metrics",),
-    "peak_after_width": ("template_metrics",),
-    "waveform_baseline_flatness": ("template_metrics",),
-    "velocity_above": ("template_metrics",),
-    "velocity_below": ("template_metrics",),
-    "exp_decay": ("template_metrics",),
-    "spread": ("template_metrics",),
-    # quality_metrics (sorting-run-dependent quality)
-    "presence_ratio": ("quality_metrics",),
-    "isi_violations_ratio": ("quality_metrics",),
-    "isi_violations_count": ("quality_metrics",),
-    "rp_contamination": ("quality_metrics",),
-    "rp_violations": ("quality_metrics",),
-    "sliding_rp_violation": ("quality_metrics",),
-    "amplitude_cutoff": ("quality_metrics",),
-    "noise_cutoff": ("quality_metrics",),
-    "noise_ratio": ("quality_metrics",),
-    "amplitude_median": ("quality_metrics",),
-    "amplitude_cv_median": ("quality_metrics",),
-    "amplitude_cv_range": ("quality_metrics",),
-    "sd_ratio": ("quality_metrics",),
-    "snr": ("quality_metrics",),
-    "isolation_distance": ("quality_metrics",),
-    "l_ratio": ("quality_metrics",),
-    "d_prime": ("quality_metrics",),
-    "nn_hit_rate": ("quality_metrics",),
-    "nn_miss_rate": ("quality_metrics",),
-    "nn_isolation": ("quality_metrics",),
-    "nn_noise_overlap": ("quality_metrics",),
-    "silhouette": ("quality_metrics",),
-    "silhouette_full": ("quality_metrics",),
-    "silhouette_simplified": ("quality_metrics",),
-    "sync_spike_2": ("quality_metrics",),
-    "sync_spike_4": ("quality_metrics",),
-    "sync_spike_8": ("quality_metrics",),
-    "firing_range": ("quality_metrics",),
-    "drift_ptp": ("quality_metrics",),
-    "drift_std": ("quality_metrics",),
-    "drift_mad": ("quality_metrics",),
-    "peak_channel": ("quality_metrics",),
-    # Aliased columns: produced by both quality_metrics and spiketrain_metrics
-    "num_spikes": ("quality_metrics", "spiketrain_metrics"),
-    "firing_rate": ("quality_metrics", "spiketrain_metrics"),
+    "firing_rate": FiringRate
 }
 
 
@@ -138,23 +76,13 @@ def _columns_supporting_periods() -> set[str]:
     even when ``qm_ext.params["periods"]`` is set, because the periods didn't
     actually constrain those values.
     """
+    from spikeinterface.metrics import ComputeQualityMetrics, ComputeTemplateMetrics, ComputeSpikeTrainMetrics
     cols: set[str] = set()
-    try:
-        from spikeinterface.metrics.quality.quality_metrics import ComputeQualityMetrics
 
-        for m in ComputeQualityMetrics.metric_list:
+    for metric_ext_cls in [ComputeQualityMetrics, ComputeSpikeTrainMetrics, ComputeTemplateMetrics]:
+        for m in metric_ext_cls.metric_list:
             if getattr(m, "supports_periods", False):
                 cols.update(m.metric_columns.keys())
-    except ImportError:
-        pass
-    try:
-        from spikeinterface.metrics.spiketrain.spiketrain_metrics import ComputeSpikeTrainMetrics
-
-        for m in ComputeSpikeTrainMetrics.metric_list:
-            if getattr(m, "supports_periods", False):
-                cols.update(m.metric_columns.keys())
-    except ImportError:
-        pass
     return cols
 
 
@@ -425,16 +353,17 @@ def _convert_spike_vector_extension(
     return nwb_class(name=extension_name, data=data, data_index=data_index)
 
 
+### METRICS ZONE ###
 def _add_cell_intrinsic_columns_to_units(
     sorting_analyzer: "SortingAnalyzer",
     nwbfile: NWBFile,
 ) -> None:
     """Add canonical cell-intrinsic metric columns to ``nwbfile.units``.
 
-    Pulls per-unit values from SI's ``template_metrics`` and ``spiketrain_metrics``
-    DataFrames and writes them as typed VectorData columns on the existing
-    ``nwbfile.units`` table. Each column carries its type tag (e.g. ``FiringRate``)
-    so a reader can recover the canonical mapping back to SI extensions.
+    Pulls per-unit values from SI's ``metrics`` extension DataFrame and writes them
+    as typed VectorData columns on the existing ``nwbfile.units`` table. Each column
+    carries its type tag (e.g. ``FiringRate``) so a reader can recover the canonical
+    mapping back to SI extensions.
 
     The rows of ``nwbfile.units`` are assumed to be aligned with
     ``sorting_analyzer.unit_ids`` (neuroconv's ``add_sorting_to_nwbfile``
@@ -451,23 +380,16 @@ def _add_cell_intrinsic_columns_to_units(
             "NWB file before calling add_sorting_analyzer_to_nwbfile."
         )
 
-    # Cache SI extension DataFrames by name so we only pull each once.
-    si_extension_data: dict[str, "pd.DataFrame"] = {}
-    for col_cls, (si_name, si_ext_name) in UNITS_TYPED_COLUMNS.items():
-        if si_ext_name not in si_extension_data:
-            ext = sorting_analyzer.get_extension(si_ext_name)
-            si_extension_data[si_ext_name] = ext.get_data() if ext is not None else None
-        df = si_extension_data[si_ext_name]
-        if df is None or si_name not in df.columns:
-            continue
-        if si_name in nwbfile.units.colnames:
-            continue  # already populated
-        nwbfile.units.add_column(
-            name=si_name,
-            description=col_cls.__doc__ or si_name,
-            data=df[si_name].to_numpy(),
-            col_cls=col_cls,
-        )
+    all_metrics = sorting_analyzer.get_metrics_extension_data()
+    for metric_name, col_cls in UNITS_TYPED_COLUMNS.items():
+        if metric_name in all_metrics.columns:
+            # TODO: fix col_cls.__doc__ (which is empty)
+            nwbfile.units.add_column(
+                name=metric_name,
+                description=col_cls.__doc__ or metric_name,
+                data=all_metrics[metric_name].to_numpy(),
+                col_cls=col_cls,
+            )
 
 
 def _units_table_id_lookup(units_table) -> dict[str, int]:
@@ -484,7 +406,7 @@ def _units_table_id_lookup(units_table) -> dict[str, int]:
     return {str(uid): i for i, uid in enumerate(ids)}
 
 
-def _analyzer_positions_to_units_rows(sorting_analyzer, units_table) -> list[int]:
+def _analyzer_unit_positions_to_units_rows(sorting_analyzer, units_table) -> list[int]:
     """For each analyzer position i, return the nwbfile.units row index for that unit id.
 
     Raises ValueError if an analyzer unit id has no matching row in the units
@@ -524,7 +446,7 @@ def _build_periods_table(
             "multi-segment support not yet implemented."
         )
     sampling_frequency = sorting_analyzer.sampling_frequency
-    analyzer_pos_to_row = _analyzer_positions_to_units_rows(sorting_analyzer, units_table)
+    analyzer_pos_to_row = _analyzer_unit_positions_to_units_rows(sorting_analyzer, units_table)
 
     start_times = [float(p["start_sample_index"]) / sampling_frequency for p in periods]
     stop_times = [float(p["end_sample_index"]) / sampling_frequency for p in periods]
@@ -552,6 +474,7 @@ def _build_periods_table(
     return table
 
 
+# TODO: simplify this
 def _build_valid_unit_periods_and_qm_time_support(
     sorting_analyzer: "SortingAnalyzer",
     units_table=None,
@@ -620,9 +543,9 @@ def _build_valid_unit_periods_and_qm_time_support(
                 sorting_analyzer=sorting_analyzer,
                 units_table=units_table,
                 table_cls=TimeIntervals,
-                name="quality_metrics_time_support",
+                name="unit_metrics_time_support",
                 description=(
-                    "Per-unit time intervals over which quality_metrics values were "
+                    "Per-unit time intervals over which some of the unit_metrics values were "
                     "computed. Sourced from quality_metrics.params['periods']."
                 ),
             )
@@ -636,7 +559,7 @@ def _convert_units_metrics(
     nwbfile: NWBFile,
     time_support_ref=None,
 ) -> UnitsMetrics | None:
-    """Build a UnitsMetrics instance from SI's ``quality_metrics`` extension.
+    """Build a UnitsMetrics instance from SI's ``metrics`` extension.
 
     Each row of the table references one unit (via the ``unit``
     ``DynamicTableRegion``) and carries that unit's run-dependent metric values
@@ -644,40 +567,15 @@ def _convert_units_metrics(
     metric column whose underlying SI metric has ``supports_periods=True`` gets
     a ``time_support`` attribute pointing to that table. Columns whose metric
     ignores periods (e.g. ``snr``) are left without a link, since the periods
-    didn't actually constrain their values. Returns ``None`` when neither
-    ``quality_metrics`` nor ``template_metrics`` is computed.
+    didn't actually constrain their values. Returns ``None`` when no metrics are computed.
     """
-    qm_ext = sorting_analyzer.get_extension("quality_metrics")
-    tm_ext = sorting_analyzer.get_extension("template_metrics")
-    if qm_ext is None and tm_ext is None:
-        return None
-
-    # Combine quality_metrics and template_metrics columns into a single
-    # DataFrame. Each column will become a VectorData entry on the UnitsMetrics
-    # table; on read, the loader uses COLUMN_TO_EXTENSION to route each column
-    # back to the right SI extension. We do not pull from spiketrain_metrics
-    # separately because its columns (num_spikes, firing_rate) are aliases of
-    # quality_metrics columns and already pulled via qm_ext.
-    if qm_ext is not None and tm_ext is not None:
-        qm_df = qm_ext.get_data()
-        tm_df = tm_ext.get_data()
-        overlap = set(qm_df.columns) & set(tm_df.columns)
-        if overlap:
-            # In SI 0.104 quality_metrics and template_metrics do not overlap.
-            # Guard for future versions: if a column appears in both, prefer
-            # the quality_metrics value (arbitrary but deterministic).
-            tm_df = tm_df.drop(columns=list(overlap))
-        df = qm_df.join(tm_df)
-    elif qm_ext is not None:
-        df = qm_ext.get_data()
-    else:
-        df = tm_ext.get_data()
+    df = sorting_analyzer.get_metrics_extension_data()
 
     # Per-row unit DTR pointing back to nwbfile.units (one row per unit). We
     # resolve each analyzer unit_id to a nwbfile.units row index by identity
     # rather than position, so the DTR stays correct even if nwbfile.units is
     # reordered or interleaved with units we don't own.
-    dtr_data = _analyzer_positions_to_units_rows(sorting_analyzer, nwbfile.units)
+    dtr_data = _analyzer_unit_positions_to_units_rows(sorting_analyzer, nwbfile.units)
     unit_column = DynamicTableRegion(
         name="unit",
         data=dtr_data,
@@ -693,10 +591,11 @@ def _convert_units_metrics(
     period_supporting_cols = _columns_supporting_periods() if time_support_ref is not None else set()
 
     # Each metric column becomes a UnitVectorData so it can carry the optional
-    # time_support reference. Column names are preserved so the read path can
-    # route each column to the right SI extension via COLUMN_TO_EXTENSION.
+    # time_support reference.
     for col_name in df.columns:
-        col_values = df[col_name].to_numpy().astype(float)
+        if col_name in UNITS_TYPED_COLUMNS:
+            continue  # Skip columns that are promoted to typed VectorData on nwbfile.units
+        col_values = df[col_name].to_numpy()
         col_kwargs = dict(
             name=col_name,
             data=col_values,
@@ -707,30 +606,9 @@ def _convert_units_metrics(
         columns.append(UnitVectorData(**col_kwargs))
 
     return UnitsMetrics(
-        name="quality_metrics",
+        name="unit_metrics",
         description="Run-dependent per-unit metrics from one analysis run.",
         columns=columns,
-    )
-
-
-def _build_column_kwargs(
-    col_cls: type,
-    si_name: str,
-    data: np.ndarray,
-    qm_params: dict,
-) -> dict:
-    """Assemble constructor kwargs for a typed canonical run-dependent column.
-
-    Currently a stub: v1 does not commit any run-dependent typed columns, so
-    this is unused. It is kept as the place where attribute-extraction logic
-    will live when typed run-dependent columns are added in a future version
-    (e.g. pulling SI's ``isi_threshold_ms`` onto a future
-    ``IsiViolationsRatio.refractory_period_ms`` attribute).
-    """
-    return dict(
-        name=si_name,
-        description=col_cls.__doc__ or si_name,
-        data=data,
     )
 
 
@@ -920,7 +798,7 @@ def _convert_all_extensions(sorting_analyzer, nwbfile):  # noqa: C901
         sorting_analyzer, units_table=nwbfile.units
     )
     if vup is not None:
-        converted["valid_unit_periods"] = vup
+        converted["__valid_unit_periods__"] = vup
     if qm_ts is not None:
         converted["__time_intervals__"] = qm_ts
 
@@ -949,10 +827,10 @@ def _build_extensions(sorting_analyzer, nwbfile):
     for attr, obj in converted.items():
         if attr == "__units_metrics__":
             extensions.add_units_metrics(obj)
-        elif attr == "valid_unit_periods":
-            extensions.add_valid_unit_periods(obj)
         elif attr == "__time_intervals__":
             extensions.add_time_intervals(obj)
+        elif attr == "__valid_unit_periods__":
+            extensions.add_valid_unit_periods(obj)
         else:
             setattr(extensions, attr, obj)
     return extensions
@@ -1473,41 +1351,36 @@ def _load_cell_intrinsic_from_units(units_table, sorting_analyzer: "SortingAnaly
     per_extension_columns: dict[str, dict[str, np.ndarray]] = {}
     for col_name in units_table.colnames:
         col = units_table[col_name]
-        for col_cls, (si_name, si_ext_name) in UNITS_TYPED_COLUMNS.items():
+        for metric_name, col_cls in UNITS_TYPED_COLUMNS.items():
             if isinstance(col, col_cls):
-                per_extension_columns.setdefault(si_ext_name, {})[si_name] = np.asarray(col.data[:])
-                break
-
-    for si_ext_name, columns_dict in per_extension_columns.items():
-        existing = sorting_analyzer.extensions.get(si_ext_name)
-        if existing is not None:
-            # Merge into existing DataFrame; preserve any params/metric_names set
-            # by the prior loader (typically _load_units_metrics for quality_metrics).
-            existing_df = existing.data.get("metrics")
-            if existing_df is not None:
-                for col_name, values in columns_dict.items():
-                    existing_df[col_name] = values
-                existing.params.setdefault("metric_names", []).extend(
-                    [n for n in columns_dict if n not in existing.params["metric_names"]]
-                )
-                existing.params["metrics_to_compute"] = list(existing.params["metric_names"])
-                continue
-
-        ext_class = get_extension_class(si_ext_name)
-        if ext_class is None:
-            continue
-        unit_ids = sorting_analyzer.unit_ids
-        metrics_df = pd.DataFrame(columns_dict, index=unit_ids)
-        ext = ext_class(sorting_analyzer)
-        ext.params = {
-            "metric_names": list(columns_dict.keys()),
-            "metric_params": {},
-            "metrics_to_compute": list(columns_dict.keys()),
-            "delete_existing_metrics": False,
-        }
-        ext.data["metrics"] = metrics_df
-        ext.run_info = {"run_completed": True, "runtime_s": 0.0}
-        sorting_analyzer.extensions[si_ext_name] = ext
+                target_extensions = find_extension_metric_targets(metric_name)
+                for si_ext_name in target_extensions:
+                    metric_ext = sorting_analyzer.extensions.get(si_ext_name)
+                    if metric_ext is not None:
+                        # If the extension is already present (e.g. from loading a UnitsMetrics), 
+                        # merge this column into it rather than overwriting it.
+                        existing_df = metric_ext.get_data()
+                        if metric_name not in existing_df:
+                            existing_df[metric_name] = np.asarray(col.data[:])
+                        metric_ext.params.setdefault("metric_names", []).append(metric_name)
+                        metric_ext.params["metrics_to_compute"] = list(metric_ext.params["metric_names"])
+                    else:
+                        # If the extension is not available, make it from scratch so the metric can be added to it.
+                        # This allows cell-intrinsic metrics to be loaded even when their extension's UnitsMetrics 
+                        # counterpart is missing.
+                        ext_class = get_extension_class(si_ext_name)
+                        unit_ids = sorting_analyzer.unit_ids
+                        metrics_df = pd.DataFrame(data={metric_name: np.asarray(col.data[:])}, index=unit_ids)
+                        ext = ext_class(sorting_analyzer)
+                        ext.params = {
+                            "metric_names": [metric_name],
+                            "metric_params": {},
+                            "metrics_to_compute": [metric_name],
+                            "delete_existing_metrics": False,
+                        }
+                        ext.data["metrics"] = metrics_df
+                        ext.run_info = {"run_completed": True, "runtime_s": 0.0}
+                        sorting_analyzer.extensions[si_ext_name] = ext
 
 
 def _collect_units_metrics_columns(nwb_table, sorting_analyzer):
@@ -1533,27 +1406,10 @@ def _collect_units_metrics_columns(nwb_table, sorting_analyzer):
         col = nwb_table[col_name]
         if time_support_link is None:
             time_support_link = getattr(col, "time_support", None)
-        # Typed-column registry path (empty in v1; future-proofing).
-        matched = False
-        for col_cls, (si_name, si_ext_name) in UNITS_METRICS_TYPED_COLUMNS.items():
-            if isinstance(col, col_cls):
-                raw = np.asarray(col.data[:])
-                per_extension_columns.setdefault(si_ext_name, {})[si_name] = raw[reorder]
-                matched = True
-                break
-        if matched:
-            continue
-        targets = COLUMN_TO_EXTENSION.get(col_name)
-        if targets is None:
-            warnings.warn(
-                f"Column {col_name!r} on UnitsMetrics is not in "
-                "COLUMN_TO_EXTENSION; routing to quality_metrics by default. "
-                "Update the dict in utils.py to silence this warning.",
-                stacklevel=2,
-            )
-            targets = ("quality_metrics",)
+
+        si_ext_targets = find_extension_metric_targets(col_name)
         values = np.asarray(col.data[:])[reorder]
-        for si_ext_name in targets:
+        for si_ext_name in si_ext_targets:
             per_extension_columns.setdefault(si_ext_name, {})[col_name] = values
     return per_extension_columns, time_support_link
 
@@ -1563,7 +1419,7 @@ def _load_units_metrics(extensions, sorting_analyzer: "SortingAnalyzer") -> None
 
     Each UnitsMetrics row holds one unit's metric values; column names identify
     the metric. The loader routes each column to the SI extension it belongs to
-    using ``COLUMN_TO_EXTENSION``. A column listed under multiple extensions
+    using ``find_extension_metric_targets``. A column listed under multiple extensions
     (e.g., ``num_spikes`` belongs to both ``quality_metrics`` and
     ``spiketrain_metrics``) is replicated into each target. A column not in the
     dict falls back to ``quality_metrics`` (matching pre-fix behavior) and is
