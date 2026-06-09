@@ -382,13 +382,17 @@ def _add_cell_intrinsic_columns_to_units(
 
     all_metrics = sorting_analyzer.get_metrics_extension_data()
     ns_catalog = get_type_map().namespace_catalog
+    row_indices = _analyzer_unit_positions_to_units_rows(sorting_analyzer, nwbfile.units)
     for metric_name, col_cls in UNITS_TYPED_COLUMNS.items():
         if metric_name in all_metrics.columns:
             spec = ns_catalog.get_spec("ndx-spikesorting", col_cls.__name__)
+            analyzer_values = all_metrics[metric_name].to_numpy()
+            nwb_ordered = np.empty_like(analyzer_values)
+            nwb_ordered[row_indices] = analyzer_values
             nwbfile.units.add_column(
                 name=metric_name,
                 description=spec.doc,
-                data=all_metrics[metric_name].to_numpy(),
+                data=nwb_ordered,
                 col_cls=col_cls,
             )
 
@@ -1349,10 +1353,16 @@ def _load_cell_intrinsic_from_units(units_table, sorting_analyzer: "SortingAnaly
     import pandas as pd
     from spikeinterface.core.sortinganalyzer import get_extension_class
 
+    # Build a reordering map from nwbfile.units rows to analyzer unit positions
+    # so cell-intrinsic values are associated with the correct units.
+    row_to_analyzer_pos = _dtr_rows_to_analyzer_positions_from_table(units_table, sorting_analyzer)
+    reorder = np.argsort(row_to_analyzer_pos)
+
     for col_name in units_table.colnames:
         col = units_table[col_name]
         for metric_name, col_cls in UNITS_TYPED_COLUMNS.items():
             if isinstance(col, col_cls):
+                reordered_values = np.asarray(col.data[:])[reorder]
                 target_extensions = find_extension_metric_targets(metric_name)
                 for si_ext_name in target_extensions:
                     metric_ext = sorting_analyzer.extensions.get(si_ext_name)
@@ -1361,7 +1371,7 @@ def _load_cell_intrinsic_from_units(units_table, sorting_analyzer: "SortingAnaly
                         # merge this column into it rather than overwriting it.
                         existing_df = metric_ext.get_data()
                         if metric_name not in existing_df:
-                            existing_df[metric_name] = np.asarray(col.data[:])
+                            existing_df[metric_name] = reordered_values
                         metric_ext.params.setdefault("metric_names", []).append(metric_name)
                         metric_ext.params["metrics_to_compute"] = list(metric_ext.params["metric_names"])
                     else:
@@ -1370,7 +1380,7 @@ def _load_cell_intrinsic_from_units(units_table, sorting_analyzer: "SortingAnaly
                         # counterpart is missing.
                         ext_class = get_extension_class(si_ext_name)
                         unit_ids = sorting_analyzer.unit_ids
-                        metrics_df = pd.DataFrame(data={metric_name: np.asarray(col.data[:])}, index=unit_ids)
+                        metrics_df = pd.DataFrame(data={metric_name: reordered_values}, index=unit_ids)
                         ext = ext_class(sorting_analyzer)
                         ext.params = {
                             "metric_names": [metric_name],
@@ -1499,6 +1509,28 @@ def _dtr_rows_to_analyzer_positions(unit_dtr, sorting_analyzer) -> np.ndarray:
                 f"but that id is not in sorting_analyzer.unit_ids: {list(analyzer_id_to_pos.keys())}"
             )
         out[i] = analyzer_id_to_pos[uid]
+    return out
+
+
+def _dtr_rows_to_analyzer_positions_from_table(units_table, sorting_analyzer) -> np.ndarray:
+    """Map every row in a units table to the corresponding analyzer unit position.
+
+    Returns an array of length ``len(units_table)`` where ``out[row_idx]`` is the
+    positional index into ``sorting_analyzer.unit_ids`` for the unit at that row.
+    Uses the same id-resolution logic as ``_dtr_rows_to_analyzer_positions``.
+    """
+    row_to_id = {row_idx: uid for uid, row_idx in _units_table_id_lookup(units_table).items()}
+    analyzer_id_to_pos = {str(uid): pos for pos, uid in enumerate(sorting_analyzer.unit_ids)}
+    n_rows = len(units_table)
+    out = np.empty(n_rows, dtype=np.int64)
+    for row_idx in range(n_rows):
+        uid = row_to_id[row_idx]
+        if uid not in analyzer_id_to_pos:
+            raise ValueError(
+                f"nwbfile.units row {row_idx} (unit id {uid!r}) is not in "
+                f"sorting_analyzer.unit_ids: {list(analyzer_id_to_pos.keys())}"
+            )
+        out[row_idx] = analyzer_id_to_pos[uid]
     return out
 
 
