@@ -585,6 +585,16 @@ def main():
         ],
     )
 
+    num_spikes = NWBDatasetSpec(
+        neurodata_type_def="NumSpikes",
+        neurodata_type_inc="VectorData",
+        dtype="int64",
+        doc=(
+            "Total number of spikes of the unit. Cell-intrinsic property; "
+            "written as a column on nwbfile.units."
+        ),
+    )
+
     unit_vector_data = NWBDatasetSpec(
         neurodata_type_def="UnitVectorData",
         neurodata_type_inc="VectorData",
@@ -845,6 +855,7 @@ def main():
         pca_projections_by_channel,
         pca_projections_concatenated,
         firing_rate,
+        num_spikes,
         valid_unit_periods,
         unit_vector_data,
         units_metrics,

@@ -10,6 +10,11 @@ datasets:
     dtype: text
     value: hertz
     doc: Unit of measurement.
+- neurodata_type_def: NumSpikes
+  neurodata_type_inc: VectorData
+  dtype: int64
+  doc: Total number of spikes of the unit. Cell-intrinsic property; written as a
+    column on nwbfile.units.
 - neurodata_type_def: UnitVectorData
   neurodata_type_inc: VectorData
   doc: A VectorData column carrying per-unit values. May reference the 

@@ -29,6 +29,7 @@ from ndx_spikesorting import (
     PCAProjectionsByChannel,
     PCAProjectionsConcatenated,
     FiringRate,
+    NumSpikes,
     UnitVectorData,
     UnitsMetrics,
     ValidUnitPeriods,
@@ -53,11 +54,12 @@ def find_extension_metric_targets(col_name: str) -> tuple[str, ...]:
 
 # Registries mapping canonical metric names to typed VectorData classes.
 # The writer uses col_cls=<class> when adding a column whose class appears here;
-# other columns are written as plain VectorData with the name preserved. 
-# The registries are the single point of SpikeInterface-specific knowledge in the loader; 
+# other columns are written as plain VectorData with the name preserved.
+# The registries are the single point of SpikeInterface-specific knowledge in the loader;
 # the spec stays tool-agnostic.
 UNITS_TYPED_COLUMNS = {
-    "firing_rate": FiringRate
+    "firing_rate": FiringRate,
+    "num_spikes": NumSpikes,
 }
 
 
