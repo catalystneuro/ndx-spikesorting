@@ -13,7 +13,6 @@ readme = "README.md"
 requires-python = ">=3.10,<3.14"
 license = "MIT"
 classifiers = [
-    # TODO: update these classifiers before release
     "Programming Language :: Python",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -70,13 +69,10 @@ min-reqs = [
     "hdmf==4.2.0",
 ]
 
-# TODO: add URLs before release
-# [project.urls]
-# "Homepage" = "https://github.com/organization/package"
-# "Documentation" = "https://package.readthedocs.io/"
-# "Bug Tracker" = "https://github.com/organization/package/issues"
-# "Discussions" = "https://github.com/organization/package/discussions"
-# "Changelog" = "https://github.com/organization/package/blob/main/CHANGELOG.md"
+[project.urls]
+"Homepage" = "https://github.com/catalystneuro/ndx-spikesorting"
+"Bug Tracker" = "https://github.com/catalystneuro/ndx-spikesorting/issues"
+"Changelog" = "https://github.com/catalystneuro/ndx-spikesorting/blob/main/CHANGELOG.md"
 
 # Include only the source code under `src/pynwb/ndx_spikesorting` and the spec files under `spec`
 # in the wheel.
