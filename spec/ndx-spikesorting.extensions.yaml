@@ -421,6 +421,53 @@ groups:
     neurodata_type_inc: DynamicTableRegion
     doc: Reference to the row in nwbfile.units that each row of this 
       UnitsMetrics describes.
+- neurodata_type_def: GlobalSpikeTrain
+  neurodata_type_inc: NWBDataInterface
+  default_name: global_spike_train
+  doc: 'The per-unit spike trains merged into one cross-unit, globally time-sorted
+    train, stored as parallel datasets (struct-of-arrays) indexed in lockstep and
+    ordered by ascending spike_times. Time-major companion to the unit-major nwbfile.units.spike_times:
+    the same spike events re-sorted by time, with an explicit per-spike unit_index
+    replacing the per-unit VectorIndex. Optional and derived; add it to enable fast
+    time-window (population) queries, including over remote/streaming files, which
+    the unit-major units table cannot serve cheaply.'
+  datasets:
+  - name: spike_times
+    dtype: float64
+    dims:
+    - num_spikes_total
+    shape:
+    - null
+    doc: Time of each spike in seconds from session start, sorted ascending. 
+      Same time coordinate as nwbfile.units.spike_times. Consumers may rely on 
+      the ascending order for binary-search time-window queries.
+    attributes:
+    - name: unit
+      dtype: text
+      value: seconds
+      doc: Unit of measurement.
+  - name: unit_index
+    dtype: int32
+    dims:
+    - num_spikes_total
+    shape:
+    - null
+    doc: For each spike, the positional index of the unit that fired, into 
+      SpikeSortingContainer.units_region. Parallel to spike_times and indexed in
+      lockstep.
+  - name: sample_index
+    dtype: int64
+    dims:
+    - num_spikes_total
+    shape:
+    - null
+    doc: Optional sample index of each spike within the source recording, 
+      parallel to spike_times. Only meaningful when 
+      SpikeSortingContainer.source_electrical_series is linked, since a sample 
+      index requires that recording's start time and sampling clock to be 
+      defined. Present for sample-exact round-tripping back into the recording 
+      traces.
+    quantity: '?'
 - neurodata_type_def: SpikeSortingExtensions
   neurodata_type_inc: NWBDataInterface
   default_name: extensions
@@ -515,6 +562,11 @@ groups:
   groups:
   - neurodata_type_inc: SpikeSortingExtensions
     doc: Container for computed extension data (templates, random spikes, etc.).
+    quantity: '?'
+  - neurodata_type_inc: GlobalSpikeTrain
+    doc: Optional time-major (globally time-sorted) merged spike train across 
+      all units, for fast time-window/population queries. Derived from the units
+      spike times.
     quantity: '?'
   links:
   - name: source_electrical_series

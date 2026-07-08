@@ -25,6 +25,7 @@ from ndx_spikesorting import (
     PCAProjectionsConcatenated,
     UnitsMetrics,
     ValidUnitPeriods,
+    GlobalSpikeTrain,
     SpikeSortingExtensions,
     SpikeSortingContainer,
 )
@@ -2501,3 +2502,110 @@ class TestUnitsMetricsTimeSupportLinkRoundtrip(TestCase):
         um = ext.units_metrics["unit_metrics"]
         from ndx_spikesorting import ValidUnitPeriods
         self.assertNotIsInstance(um["presence_ratio"].time_support, ValidUnitPeriods)
+
+
+def create_mock_global_spike_train(spikes_per_unit=None, with_sample_index=True, fs=30000.0):
+    """Create a GlobalSpikeTrain: per-unit spikes merged and globally time-sorted."""
+    if spikes_per_unit is None:
+        spikes_per_unit = [50, 40, 60]
+    times, units = [], []
+    for unit, n in enumerate(spikes_per_unit):
+        times.append(np.random.uniform(0, 10, size=n))
+        units.append(np.full(n, unit, dtype="int32"))
+    times = np.concatenate(times)
+    units = np.concatenate(units)
+    order = np.argsort(times, kind="stable")
+    spike_times = times[order].astype("float64")
+    unit_index = units[order].astype("int32")
+    kwargs = dict(spike_times=spike_times, unit_index=unit_index)
+    if with_sample_index:
+        kwargs["sample_index"] = np.round(spike_times * fs).astype("int64")
+    return GlobalSpikeTrain(**kwargs)
+
+
+class TestGlobalSpikeTrainConstructor(TestCase):
+    """Unit tests for GlobalSpikeTrain constructor."""
+
+    def test_constructor(self):
+        """Values are set and the train is globally time-sorted."""
+        gst = create_mock_global_spike_train()
+
+        self.assertEqual(gst.name, "global_spike_train")
+        self.assertEqual(len(gst.spike_times), 150)  # 50 + 40 + 60
+        self.assertEqual(len(gst.unit_index), 150)
+        self.assertEqual(len(gst.sample_index), 150)
+        # invariant: ascending spike_times
+        self.assertTrue(np.all(np.diff(gst.spike_times[:]) >= 0))
+
+    def test_constructor_without_sample_index(self):
+        """sample_index is optional and absent when a recording is not linked."""
+        gst = create_mock_global_spike_train(with_sample_index=False)
+
+        self.assertEqual(len(gst.spike_times), 150)
+        self.assertIsNone(gst.sample_index)
+
+
+class TestGlobalSpikeTrainRoundtrip(TestCase):
+    """Roundtrip test for GlobalSpikeTrain on SpikeSortingContainer."""
+
+    def setUp(self):
+        self.nwbfile = set_up_nwbfile()
+        self.path = "test_global_spike_train.nwb"
+
+    def tearDown(self):
+        remove_test_file(self.path)
+
+    def _make_container(self):
+        electrodes_region = self.nwbfile.create_electrode_table_region(
+            region=list(range(10)),
+            description="all electrodes",
+        )
+        units_region = create_units_region(self.nwbfile)
+        return SpikeSortingContainer(
+            name="spike_sorting",
+            sampling_frequency=30000.0,
+            electrodes=electrodes_region,
+            units_region=units_region,
+        )
+
+    def _write_and_read(self, container, check):
+        ecephys_module = self.nwbfile.create_processing_module(
+            name="ecephys",
+            description="Extracellular electrophysiology processing",
+        )
+        ecephys_module.add(container)
+
+        with NWBHDF5IO(self.path, mode="w") as io:
+            io.write(self.nwbfile)
+
+        with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
+            read_nwbfile = io.read()
+            read_gst = read_nwbfile.processing["ecephys"]["spike_sorting"].global_spike_train
+            check(read_gst)
+
+    def test_roundtrip(self):
+        """Write and read GlobalSpikeTrain with sample_index."""
+        gst = create_mock_global_spike_train()
+        container = self._make_container()
+        container.global_spike_train = gst
+
+        def check(read_gst):
+            np.testing.assert_array_almost_equal(read_gst.spike_times[:], gst.spike_times[:])
+            np.testing.assert_array_equal(read_gst.unit_index[:], gst.unit_index[:])
+            np.testing.assert_array_equal(read_gst.sample_index[:], gst.sample_index[:])
+            self.assertEqual(read_gst.spike_times__unit, "seconds")
+
+        self._write_and_read(container, check)
+
+    def test_roundtrip_without_sample_index(self):
+        """Write and read GlobalSpikeTrain without the optional sample_index."""
+        gst = create_mock_global_spike_train(with_sample_index=False)
+        container = self._make_container()
+        container.global_spike_train = gst
+
+        def check(read_gst):
+            np.testing.assert_array_almost_equal(read_gst.spike_times[:], gst.spike_times[:])
+            np.testing.assert_array_equal(read_gst.unit_index[:], gst.unit_index[:])
+            self.assertIsNone(read_gst.sample_index)
+
+        self._write_and_read(container, check)

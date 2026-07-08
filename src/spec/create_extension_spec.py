@@ -668,6 +668,77 @@ def main():
         ],
     )
 
+    # GlobalSpikeTrain: the per-unit spike trains merged into ONE cross-unit,
+    # globally time-sorted train (time-major). Companion to the unit-major
+    # nwbfile.units.spike_times. Stored as two parallel datasets (struct-of-arrays)
+    # rather than one compound dataset so each column is homogeneous and compresses
+    # independently: the monotonic spike_times delta/shuffle well and the
+    # low-cardinality unit_index to almost nothing.
+    global_spike_train = NWBGroupSpec(
+        neurodata_type_def="GlobalSpikeTrain",
+        neurodata_type_inc="NWBDataInterface",
+        default_name="global_spike_train",
+        doc=(
+            "The per-unit spike trains merged into one cross-unit, globally "
+            "time-sorted train, stored as parallel datasets (struct-of-arrays) "
+            "indexed in lockstep and ordered by ascending spike_times. Time-major "
+            "companion to the unit-major nwbfile.units.spike_times: the same spike "
+            "events re-sorted by time, with an explicit per-spike unit_index "
+            "replacing the per-unit VectorIndex. Optional and derived; add it to "
+            "enable fast time-window (population) queries, including over "
+            "remote/streaming files, which the unit-major units table cannot serve "
+            "cheaply."
+        ),
+        datasets=[
+            NWBDatasetSpec(
+                name="spike_times",
+                dtype="float64",
+                dims=["num_spikes_total"],
+                shape=[None],
+                doc=(
+                    "Time of each spike in seconds from session start, sorted "
+                    "ascending. Same time coordinate as nwbfile.units.spike_times. "
+                    "Consumers may rely on the ascending order for binary-search "
+                    "time-window queries."
+                ),
+                attributes=[
+                    NWBAttributeSpec(
+                        name="unit",
+                        dtype="text",
+                        value="seconds",
+                        doc="Unit of measurement.",
+                    ),
+                ],
+            ),
+            NWBDatasetSpec(
+                name="unit_index",
+                dtype="int32",
+                dims=["num_spikes_total"],
+                shape=[None],
+                doc=(
+                    "For each spike, the positional index of the unit that fired, "
+                    "into SpikeSortingContainer.units_region. Parallel to "
+                    "spike_times and indexed in lockstep."
+                ),
+            ),
+            NWBDatasetSpec(
+                name="sample_index",
+                dtype="int64",
+                dims=["num_spikes_total"],
+                shape=[None],
+                quantity="?",
+                doc=(
+                    "Optional sample index of each spike within the source "
+                    "recording, parallel to spike_times. Only meaningful when "
+                    "SpikeSortingContainer.source_electrical_series is linked, since "
+                    "a sample index requires that recording's start time and "
+                    "sampling clock to be defined. Present for sample-exact "
+                    "round-tripping back into the recording traces."
+                ),
+            ),
+        ],
+    )
+
     # SpikeSortingExtensions: container group for all computed extensions
     spike_sorting_extensions = NWBGroupSpec(
         neurodata_type_def="SpikeSortingExtensions",
@@ -836,6 +907,15 @@ def main():
                 quantity="?",
                 doc="Container for computed extension data (templates, random spikes, etc.).",
             ),
+            NWBGroupSpec(
+                neurodata_type_inc="GlobalSpikeTrain",
+                quantity="?",
+                doc=(
+                    "Optional time-major (globally time-sorted) merged spike train "
+                    "across all units, for fast time-window/population queries. "
+                    "Derived from the units spike times."
+                ),
+            ),
         ],
     )
 
@@ -859,6 +939,7 @@ def main():
         valid_unit_periods,
         unit_vector_data,
         units_metrics,
+        global_spike_train,
         spike_sorting_extensions,
         spike_sorting_container,
     ]
