@@ -14,4 +14,4 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
       - name: Ruff
-        uses: astral-sh/ruff-action@v4
+        uses: astral-sh/ruff-action@v4.1.0
