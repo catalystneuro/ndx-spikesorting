@@ -684,7 +684,9 @@ def main():
             "by unit: the same spike events, re-sorted by time, with a per-spike "
             "unit_index recording which unit each spike came from. The spike_times, "
             "unit_index, and optional sample_index datasets are parallel and read in "
-            "lockstep, so element k of each describes the same spike. Because the "
+            "lockstep, so element k of each describes the same spike. All three have "
+            "the same length num_spikes_total, so a reader can size buffers from any "
+            "one of them. Because the "
             "train is sorted by time, all spikes in a time interval form one "
             "contiguous run retrievable by binary search on spike_times, which makes "
             "population time-window queries efficient even over remote/streaming "
@@ -701,9 +703,11 @@ def main():
                 shape=[None],
                 doc=(
                     "Time of each spike in seconds from session start, sorted "
-                    "ascending. Same time coordinate as nwbfile.units.spike_times. "
-                    "Consumers may rely on the ascending order for binary-search "
-                    "time-window queries."
+                    "ascending. Spikes with equal times are ordered by unit_index "
+                    "ascending, so the merge is fully deterministic and stable "
+                    "across writers. Same time coordinate as "
+                    "nwbfile.units.spike_times. Consumers may rely on the ascending "
+                    "order for binary-search time-window queries."
                 ),
                 attributes=[
                     NWBAttributeSpec(
@@ -722,7 +726,9 @@ def main():
                 doc=(
                     "For each spike, the positional index of the unit that fired, "
                     "into SpikeSortingContainer.units_region. Parallel to "
-                    "spike_times and indexed in lockstep."
+                    "spike_times and indexed in lockstep. To recover the unit for "
+                    "spike k, index units_region with unit_index[k]; that resolves "
+                    "to the corresponding row (and id) in nwbfile.units."
                 ),
             ),
             NWBDatasetSpec(
@@ -736,8 +742,11 @@ def main():
                     "recording, parallel to spike_times. Only meaningful when "
                     "SpikeSortingContainer.source_electrical_series is linked, since "
                     "a sample index requires that recording's start time and "
-                    "sampling clock to be defined. Present for sample-exact "
-                    "round-tripping back into the recording traces."
+                    "sampling clock to be defined. When present, sample_index[k] is "
+                    "the exact frame of spike_times[k] in that recording's clock, "
+                    "round((spike_times[k] - recording_start_time) * sampling_rate); "
+                    "it is redundant with spike_times but exact for indexing back "
+                    "into the recording traces."
                 ),
             ),
         ],
