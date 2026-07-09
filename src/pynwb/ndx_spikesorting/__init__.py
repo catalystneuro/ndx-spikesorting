@@ -1,6 +1,7 @@
 from importlib.resources import files
 
 from pynwb import load_namespaces, get_class, register_class
+from hdmf.utils import docval, get_docval
 
 # Get path to the namespace.yaml file with the expected location when installed not in editable mode
 __location_of_this_file = files(__name__)
@@ -55,6 +56,16 @@ class UnitsMetrics(_AutoUnitsMetrics):
     they can carry the optional ``time_support`` reference. Pass
     ``col_cls=VectorData`` explicitly to opt out for a particular column.
     """
+
+    # Temporary workaround for an hdmf regression (>=6.x): MultiContainerInterface
+    # regenerates a subclass's __init__ from __clsconf__ alone when the subclass
+    # does not define its own, dropping the inherited DynamicTable arguments
+    # (description, columns, ...). Defining a delegating __init__ that copies the
+    # parent's docval keeps __init__ in this class's __dict__, so the regeneration
+    # hook skips it. Remove once hdmf restores the inherited constructor.
+    @docval(*get_docval(_AutoUnitsMetrics.__init__))
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
     def add_column(self, **kwargs):
         if kwargs.get("col_cls") is None and kwargs.get("name") != "unit":
