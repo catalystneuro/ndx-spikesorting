@@ -670,24 +670,28 @@ def main():
 
     # GlobalSpikeTrain: the per-unit spike trains merged into ONE cross-unit,
     # globally time-sorted train (time-major). Companion to the unit-major
-    # nwbfile.units.spike_times. Stored as two parallel datasets (struct-of-arrays)
-    # rather than one compound dataset so each column is homogeneous and compresses
-    # independently: the monotonic spike_times delta/shuffle well and the
-    # low-cardinality unit_index to almost nothing.
+    # nwbfile.units.spike_times. Each field is a separate dataset (spike_times,
+    # unit_index, and optional sample_index) rather than one packed dataset, so each
+    # column is homogeneous and can be read and compressed on its own.
     global_spike_train = NWBGroupSpec(
         neurodata_type_def="GlobalSpikeTrain",
         neurodata_type_inc="NWBDataInterface",
         default_name="global_spike_train",
         doc=(
-            "The per-unit spike trains merged into one cross-unit, globally "
-            "time-sorted train, stored as parallel datasets (struct-of-arrays) "
-            "indexed in lockstep and ordered by ascending spike_times. Time-major "
-            "companion to the unit-major nwbfile.units.spike_times: the same spike "
-            "events re-sorted by time, with an explicit per-spike unit_index "
-            "replacing the per-unit VectorIndex. Optional and derived; add it to "
-            "enable fast time-window (population) queries, including over "
-            "remote/streaming files, which the unit-major units table cannot serve "
-            "cheaply."
+            "A single time-sorted spike train that merges the spikes of all units "
+            "into one sequence ordered by spike time. It is the time-major "
+            "counterpart to nwbfile.units.spike_times, which instead groups spikes "
+            "by unit: the same spike events, re-sorted by time, with a per-spike "
+            "unit_index recording which unit each spike came from. The spike_times, "
+            "unit_index, and optional sample_index datasets are parallel and read in "
+            "lockstep, so element k of each describes the same spike. Because the "
+            "train is sorted by time, all spikes in a time interval form one "
+            "contiguous run retrievable by binary search on spike_times, which makes "
+            "population time-window queries efficient even over remote/streaming "
+            "files; the per-unit units table cannot answer those cheaply. This type "
+            "is optional and fully derived from nwbfile.units.spike_times: store it "
+            "when the time-window or streaming access pattern matters, and keep the "
+            "units table for per-unit access."
         ),
         datasets=[
             NWBDatasetSpec(
