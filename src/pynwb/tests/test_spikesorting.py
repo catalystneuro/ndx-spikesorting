@@ -25,6 +25,7 @@ from ndx_spikesorting import (
     PCAProjectionsConcatenated,
     UnitsMetrics,
     ValidUnitPeriods,
+    GlobalSpikeTrain,
     SpikeSortingExtensions,
     SpikeSortingContainer,
 )
@@ -2032,6 +2033,69 @@ class TestAddSortingAnalyzerToNwbfile(TestCase):
         self.assertEqual(self.nwbfile.processing["ecephys"].description, "pre-existing")
         self.assertIn("spike_sorting", self.nwbfile.processing["ecephys"].data_interfaces)
 
+    def test_recording_provenance_stored(self):
+        """num_samples, t_start, is_filtered provenance is written to the container."""
+        self.add_fn(self.sorting_analyzer, self.nwbfile)
+        container = self.nwbfile.processing["ecephys"]["spike_sorting"]
+
+        recording = self.sorting_analyzer.recording
+        self.assertEqual(container.num_samples, recording.get_num_samples())
+        self.assertEqual(container.is_filtered, recording.is_filtered())
+        self.assertAlmostEqual(container.t_start, 0.0)
+        # duration is derived from num_samples / sampling_frequency, not stored
+        self.assertNotIn("duration", container.fields)
+        self.assertAlmostEqual(
+            container.num_samples / container.sampling_frequency,
+            recording.get_num_samples() / recording.sampling_frequency,
+        )
+
+    def test_t_start_provenance_follows_sorting_clock(self):
+        """t_start reflects the sorting's time origin, not an unrelated recording shift."""
+        from spikeinterface.core import create_sorting_analyzer
+
+        sa, rec, sort = _create_sorting_analyzer(compute_all=False)
+        rec.shift_times(4.0)
+        sort.register_recording(rec)  # sorting now shares the shifted clock
+        sa = create_sorting_analyzer(sorting=sort, recording=rec, format="memory", sparse=True)
+        nwbfile = _create_nwbfile_with_recording_and_sorting(rec, sort)
+        self.add_fn(sa, nwbfile)
+
+        container = nwbfile.processing["ecephys"]["spike_sorting"]
+        self.assertAlmostEqual(container.t_start, 4.0)
+
+    def test_global_spike_train_written(self):
+        """GlobalSpikeTrain is built: time-sorted, unit_index tie-break, parallel columns."""
+        self.add_fn(self.sorting_analyzer, self.nwbfile)
+        gst = self.nwbfile.processing["ecephys"]["spike_sorting"].global_spike_train
+        self.assertIsNotNone(gst)
+
+        spike_times = np.asarray(gst.spike_times[:])
+        unit_index = np.asarray(gst.unit_index[:])
+        sample_index = np.asarray(gst.sample_index[:])
+
+        # parallel, equal-length columns summing to every unit's spikes
+        num_spikes = spike_times.shape[0]
+        self.assertEqual(unit_index.shape[0], num_spikes)
+        self.assertEqual(sample_index.shape[0], num_spikes)
+        total = sum(len(self.sorting.get_unit_spike_train(unit_id=u)) for u in self.sorting.unit_ids)
+        self.assertEqual(num_spikes, total)
+
+        # sorted ascending, with equal times ordered by unit_index ascending
+        self.assertTrue(np.all(np.diff(spike_times) >= 0))
+        for t in np.unique(spike_times):
+            mask = spike_times == t
+            if mask.sum() > 1:
+                self.assertTrue(np.all(np.diff(unit_index[mask]) >= 0))
+
+    def test_global_spike_train_matches_units_spike_times(self):
+        """GlobalSpikeTrain.spike_times share the units table's time coordinate."""
+        self.add_fn(self.sorting_analyzer, self.nwbfile)
+        units = self.nwbfile.units
+        units_times = np.sort(np.concatenate([units["spike_times"][i] for i in range(len(units))]))
+        gst = self.nwbfile.processing["ecephys"]["spike_sorting"].global_spike_train
+        gst_times = np.sort(np.asarray(gst.spike_times[:]))
+        np.testing.assert_array_almost_equal(gst_times, units_times)
+
 
 class TestReadSortingAnalyzerFromNwb(TestCase):
     """Tests for read_sorting_analyzer_from_nwb."""
@@ -2051,6 +2115,43 @@ class TestReadSortingAnalyzerFromNwb(TestCase):
     def tearDown(self):
         del self.sorting_analyzer, self.recording, self.sorting
         remove_test_file(self.path)
+
+    def test_reader_reconstructs_frames_with_stored_t_start(self):
+        """Reader applies the stored t_start, so native frames round-trip on a shifted clock.
+
+        The units table stores spike times in the session clock (origin 4 s here).
+        Only by reading them back with the stored t_start does the reconstructed
+        sorting recover the original native sample frames; the previous hard-coded
+        ``t_start=0`` would offset every frame by ``t_start * sampling_frequency``.
+        """
+        from spikeinterface.core import create_sorting_analyzer
+
+        from ndx_spikesorting import add_sorting_analyzer_to_nwbfile
+
+        sa, rec, sort = _create_sorting_analyzer(compute_all=False)
+        rec.shift_times(4.0)
+        sort.register_recording(rec)
+        sa = create_sorting_analyzer(sorting=sort, recording=rec, format="memory", sparse=True)
+        nwbfile = _create_nwbfile_with_recording_and_sorting(rec, sort)
+        add_sorting_analyzer_to_nwbfile(sa, nwbfile)
+
+        path = "test_reader_t_start.nwb"
+        try:
+            with NWBHDF5IO(path, mode="w") as io:
+                io.write(nwbfile)
+            read_sa = self.read_fn(path)
+
+            reconstructed = np.sort(
+                np.concatenate(
+                    [read_sa.sorting.get_unit_spike_train(unit_id=u) for u in read_sa.sorting.unit_ids]
+                )
+            )
+            original = np.sort(
+                np.concatenate([sort.get_unit_spike_train(unit_id=u) for u in sort.unit_ids])
+            )
+            np.testing.assert_array_equal(reconstructed, original)
+        finally:
+            remove_test_file(path)
 
     def test_loads_all_extensions(self):
         """Extensions restored from the NWB file.
@@ -2501,3 +2602,110 @@ class TestUnitsMetricsTimeSupportLinkRoundtrip(TestCase):
         um = ext.units_metrics["unit_metrics"]
         from ndx_spikesorting import ValidUnitPeriods
         self.assertNotIsInstance(um["presence_ratio"].time_support, ValidUnitPeriods)
+
+
+def create_mock_global_spike_train(spikes_per_unit=None, with_sample_index=True, fs=30000.0):
+    """Create a GlobalSpikeTrain: per-unit spikes merged and globally time-sorted."""
+    if spikes_per_unit is None:
+        spikes_per_unit = [50, 40, 60]
+    times, units = [], []
+    for unit, n in enumerate(spikes_per_unit):
+        times.append(np.random.uniform(0, 10, size=n))
+        units.append(np.full(n, unit, dtype="int32"))
+    times = np.concatenate(times)
+    units = np.concatenate(units)
+    order = np.argsort(times, kind="stable")
+    spike_times = times[order].astype("float64")
+    unit_index = units[order].astype("int32")
+    kwargs = dict(spike_times=spike_times, unit_index=unit_index)
+    if with_sample_index:
+        kwargs["sample_index"] = np.round(spike_times * fs).astype("int64")
+    return GlobalSpikeTrain(**kwargs)
+
+
+class TestGlobalSpikeTrainConstructor(TestCase):
+    """Unit tests for GlobalSpikeTrain constructor."""
+
+    def test_constructor(self):
+        """Values are set and the train is globally time-sorted."""
+        gst = create_mock_global_spike_train()
+
+        self.assertEqual(gst.name, "global_spike_train")
+        self.assertEqual(len(gst.spike_times), 150)  # 50 + 40 + 60
+        self.assertEqual(len(gst.unit_index), 150)
+        self.assertEqual(len(gst.sample_index), 150)
+        # invariant: ascending spike_times
+        self.assertTrue(np.all(np.diff(gst.spike_times[:]) >= 0))
+
+    def test_constructor_without_sample_index(self):
+        """sample_index is optional and absent when a recording is not linked."""
+        gst = create_mock_global_spike_train(with_sample_index=False)
+
+        self.assertEqual(len(gst.spike_times), 150)
+        self.assertIsNone(gst.sample_index)
+
+
+class TestGlobalSpikeTrainRoundtrip(TestCase):
+    """Roundtrip test for GlobalSpikeTrain on SpikeSortingContainer."""
+
+    def setUp(self):
+        self.nwbfile = set_up_nwbfile()
+        self.path = "test_global_spike_train.nwb"
+
+    def tearDown(self):
+        remove_test_file(self.path)
+
+    def _make_container(self):
+        electrodes_region = self.nwbfile.create_electrode_table_region(
+            region=list(range(10)),
+            description="all electrodes",
+        )
+        units_region = create_units_region(self.nwbfile)
+        return SpikeSortingContainer(
+            name="spike_sorting",
+            sampling_frequency=30000.0,
+            electrodes=electrodes_region,
+            units_region=units_region,
+        )
+
+    def _write_and_read(self, container, check):
+        ecephys_module = self.nwbfile.create_processing_module(
+            name="ecephys",
+            description="Extracellular electrophysiology processing",
+        )
+        ecephys_module.add(container)
+
+        with NWBHDF5IO(self.path, mode="w") as io:
+            io.write(self.nwbfile)
+
+        with NWBHDF5IO(self.path, mode="r", load_namespaces=True) as io:
+            read_nwbfile = io.read()
+            read_gst = read_nwbfile.processing["ecephys"]["spike_sorting"].global_spike_train
+            check(read_gst)
+
+    def test_roundtrip(self):
+        """Write and read GlobalSpikeTrain with sample_index."""
+        gst = create_mock_global_spike_train()
+        container = self._make_container()
+        container.global_spike_train = gst
+
+        def check(read_gst):
+            np.testing.assert_array_almost_equal(read_gst.spike_times[:], gst.spike_times[:])
+            np.testing.assert_array_equal(read_gst.unit_index[:], gst.unit_index[:])
+            np.testing.assert_array_equal(read_gst.sample_index[:], gst.sample_index[:])
+            self.assertEqual(read_gst.spike_times__unit, "seconds")
+
+        self._write_and_read(container, check)
+
+    def test_roundtrip_without_sample_index(self):
+        """Write and read GlobalSpikeTrain without the optional sample_index."""
+        gst = create_mock_global_spike_train(with_sample_index=False)
+        container = self._make_container()
+        container.global_spike_train = gst
+
+        def check(read_gst):
+            np.testing.assert_array_almost_equal(read_gst.spike_times[:], gst.spike_times[:])
+            np.testing.assert_array_equal(read_gst.unit_index[:], gst.unit_index[:])
+            self.assertIsNone(read_gst.sample_index)
+
+        self._write_and_read(container, check)

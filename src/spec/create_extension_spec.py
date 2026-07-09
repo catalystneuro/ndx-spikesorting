@@ -668,6 +668,90 @@ def main():
         ],
     )
 
+    # GlobalSpikeTrain: the per-unit spike trains merged into ONE cross-unit,
+    # globally time-sorted train (time-major). Companion to the unit-major
+    # nwbfile.units.spike_times. Each field is a separate dataset (spike_times,
+    # unit_index, and optional sample_index) rather than one packed dataset, so each
+    # column is homogeneous and can be read and compressed on its own.
+    global_spike_train = NWBGroupSpec(
+        neurodata_type_def="GlobalSpikeTrain",
+        neurodata_type_inc="NWBDataInterface",
+        default_name="global_spike_train",
+        doc=(
+            "A single time-sorted spike train that merges the spikes of all units "
+            "into one sequence ordered by spike time. It is the time-major "
+            "counterpart to nwbfile.units.spike_times, which instead groups spikes "
+            "by unit: the same spike events, re-sorted by time, with a per-spike "
+            "unit_index recording which unit each spike came from. The spike_times, "
+            "unit_index, and optional sample_index datasets are parallel and read in "
+            "lockstep, so element k of each describes the same spike. All three have "
+            "the same length num_spikes_total, so a reader can size buffers from any "
+            "one of them. Because the "
+            "train is sorted by time, all spikes in a time interval form one "
+            "contiguous run retrievable by binary search on spike_times, which makes "
+            "population time-window queries efficient even over remote/streaming "
+            "files; the per-unit units table cannot answer those cheaply. This type "
+            "is optional and fully derived from nwbfile.units.spike_times: store it "
+            "when the time-window or streaming access pattern matters, and keep the "
+            "units table for per-unit access."
+        ),
+        datasets=[
+            NWBDatasetSpec(
+                name="spike_times",
+                dtype="float64",
+                dims=["num_spikes_total"],
+                shape=[None],
+                doc=(
+                    "Time of each spike in seconds from session start, sorted "
+                    "ascending. Spikes with equal times are ordered by unit_index "
+                    "ascending, so the merge is fully deterministic and stable "
+                    "across writers. Same time coordinate as "
+                    "nwbfile.units.spike_times. Consumers may rely on the ascending "
+                    "order for binary-search time-window queries."
+                ),
+                attributes=[
+                    NWBAttributeSpec(
+                        name="unit",
+                        dtype="text",
+                        value="seconds",
+                        doc="Unit of measurement.",
+                    ),
+                ],
+            ),
+            NWBDatasetSpec(
+                name="unit_index",
+                dtype="int32",
+                dims=["num_spikes_total"],
+                shape=[None],
+                doc=(
+                    "For each spike, the positional index of the unit that fired, "
+                    "into SpikeSortingContainer.units_region. Parallel to "
+                    "spike_times and indexed in lockstep. To recover the unit for "
+                    "spike k, index units_region with unit_index[k]; that resolves "
+                    "to the corresponding row (and id) in nwbfile.units."
+                ),
+            ),
+            NWBDatasetSpec(
+                name="sample_index",
+                dtype="int64",
+                dims=["num_spikes_total"],
+                shape=[None],
+                quantity="?",
+                doc=(
+                    "Optional sample index of each spike within the source "
+                    "recording, parallel to spike_times. Only meaningful when "
+                    "SpikeSortingContainer.source_electrical_series is linked, since "
+                    "a sample index requires that recording's start time and "
+                    "sampling clock to be defined. When present, sample_index[k] is "
+                    "the exact frame of spike_times[k] in that recording's clock, "
+                    "round((spike_times[k] - recording_start_time) * sampling_rate); "
+                    "it is redundant with spike_times but exact for indexing back "
+                    "into the recording traces."
+                ),
+            ),
+        ],
+    )
+
     # SpikeSortingExtensions: container group for all computed extensions
     spike_sorting_extensions = NWBGroupSpec(
         neurodata_type_def="SpikeSortingExtensions",
@@ -789,6 +873,40 @@ def main():
                 dtype="float64",
                 doc="Sampling frequency of the recording in Hz.",
             ),
+            NWBAttributeSpec(
+                name="num_samples",
+                dtype="int64",
+                required=False,
+                doc=(
+                    "Total number of samples (frames) in the source recording's "
+                    "timeline. Stored so the file is self-describing in recordingless "
+                    "mode, where there is no ElectricalSeries to read the length from; "
+                    "it gives the exact timeline extent for duration-based metrics "
+                    "(firing rate, presence ratio). The recording duration in seconds "
+                    "is num_samples / sampling_frequency; duration is not stored "
+                    "separately to avoid two values that can disagree."
+                ),
+            ),
+            NWBAttributeSpec(
+                name="t_start",
+                dtype="float64",
+                required=False,
+                doc=(
+                    "Start time of the source recording in seconds, i.e. the time "
+                    "coordinate of sample 0. Readers may default this to 0 when "
+                    "absent (spike times are seconds from session start and therefore "
+                    "non-negative); store the real origin here when it is known."
+                ),
+            ),
+            NWBAttributeSpec(
+                name="is_filtered",
+                dtype="bool",
+                required=False,
+                doc=(
+                    "Whether the source recording was filtered. Recorded as "
+                    "provenance so recordingless readers do not have to guess it."
+                ),
+            ),
         ],
         datasets=[
             NWBDatasetSpec(
@@ -836,6 +954,15 @@ def main():
                 quantity="?",
                 doc="Container for computed extension data (templates, random spikes, etc.).",
             ),
+            NWBGroupSpec(
+                neurodata_type_inc="GlobalSpikeTrain",
+                quantity="?",
+                doc=(
+                    "Optional time-major (globally time-sorted) merged spike train "
+                    "across all units, for fast time-window/population queries. "
+                    "Derived from the units spike times."
+                ),
+            ),
         ],
     )
 
@@ -859,6 +986,7 @@ def main():
         valid_unit_periods,
         unit_vector_data,
         units_metrics,
+        global_spike_train,
         spike_sorting_extensions,
         spike_sorting_container,
     ]

@@ -72,6 +72,7 @@ class UnitsMetrics(_AutoUnitsMetrics):
             kwargs["col_cls"] = UnitVectorData
         return super().add_column(**kwargs)
 
+GlobalSpikeTrain = get_class("GlobalSpikeTrain", "ndx-spikesorting")
 SpikeSortingExtensions = get_class("SpikeSortingExtensions", "ndx-spikesorting")
 SpikeSortingContainer = get_class("SpikeSortingContainer", "ndx-spikesorting")
 
@@ -96,6 +97,7 @@ __all__ = [
     "UnitVectorData",
     "UnitsMetrics",
     "ValidUnitPeriods",
+    "GlobalSpikeTrain",
     "SpikeSortingExtensions",
     "SpikeSortingContainer",
     "templates_to_dense",
