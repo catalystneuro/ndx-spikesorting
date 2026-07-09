@@ -873,6 +873,40 @@ def main():
                 dtype="float64",
                 doc="Sampling frequency of the recording in Hz.",
             ),
+            NWBAttributeSpec(
+                name="num_samples",
+                dtype="int64",
+                required=False,
+                doc=(
+                    "Total number of samples (frames) in the source recording's "
+                    "timeline. Stored so the file is self-describing in recordingless "
+                    "mode, where there is no ElectricalSeries to read the length from; "
+                    "it gives the exact timeline extent for duration-based metrics "
+                    "(firing rate, presence ratio). The recording duration in seconds "
+                    "is num_samples / sampling_frequency; duration is not stored "
+                    "separately to avoid two values that can disagree."
+                ),
+            ),
+            NWBAttributeSpec(
+                name="t_start",
+                dtype="float64",
+                required=False,
+                doc=(
+                    "Start time of the source recording in seconds, i.e. the time "
+                    "coordinate of sample 0. Readers may default this to 0 when "
+                    "absent (spike times are seconds from session start and therefore "
+                    "non-negative); store the real origin here when it is known."
+                ),
+            ),
+            NWBAttributeSpec(
+                name="is_filtered",
+                dtype="bool",
+                required=False,
+                doc=(
+                    "Whether the source recording was filtered. Recorded as "
+                    "provenance so recordingless readers do not have to guess it."
+                ),
+            ),
         ],
         datasets=[
             NWBDatasetSpec(

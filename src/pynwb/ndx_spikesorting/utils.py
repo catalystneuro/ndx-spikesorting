@@ -35,6 +35,7 @@ from ndx_spikesorting import (
     ValidUnitPeriods,
     SpikeSortingExtensions,
     SpikeSortingContainer,
+    GlobalSpikeTrain,
 )
 
 
@@ -353,6 +354,53 @@ def _convert_spike_vector_extension(
         target=data,
     )
     return nwb_class(name=extension_name, data=data, data_index=data_index)
+
+
+def _build_global_spike_train(
+    sorting_analyzer: "SortingAnalyzer",
+    include_sample_index: bool,
+) -> GlobalSpikeTrain:
+    """Merge every per-unit spike train into one globally time-sorted GlobalSpikeTrain.
+
+    The spikes of all units are combined into a single sequence ordered by spike
+    time. Spikes with equal times are ordered by ``unit_index`` ascending so the
+    merge is deterministic (the tie-break the spec documents). ``unit_index`` is
+    the analyzer unit position, which is exactly the position used by
+    ``SpikeSortingContainer.units_region``. ``sample_index`` is the native frame of
+    each spike in the source recording; it is only included when that recording is
+    linked, since a frame is only meaningful against its sampling clock.
+
+    ``spike_times`` is read from the sorting's own clock via
+    ``get_unit_spike_train(return_times=True)``, i.e. the exact same source
+    ``nwbfile.units.spike_times`` is written from, so the two share a time
+    coordinate. That clock already encodes any start-time offset or timestamp
+    vector the sorting is registered against; with no time registration frames map
+    to seconds at ``t_start = 0``.
+    """
+    sorting = sorting_analyzer.sorting
+
+    times_list, frames_list, units_list = [], [], []
+    for position, unit_id in enumerate(sorting.unit_ids):
+        frames = np.asarray(sorting.get_unit_spike_train(unit_id=unit_id))
+        times = np.asarray(sorting.get_unit_spike_train(unit_id=unit_id, return_times=True))
+        times_list.append(times)
+        frames_list.append(frames)
+        units_list.append(np.full(frames.shape[0], position, dtype=np.int32))
+
+    spike_times = np.concatenate(times_list).astype(np.float64)
+    sample_index = np.concatenate(frames_list)
+    unit_index = np.concatenate(units_list)
+
+    # Global time order; ties broken by unit_index ascending (the documented tie-break).
+    order = np.lexsort((unit_index, spike_times))
+    spike_times = spike_times[order]
+    sample_index = sample_index[order]
+    unit_index = unit_index[order]
+
+    kwargs = dict(spike_times=spike_times, unit_index=unit_index)
+    if include_sample_index:
+        kwargs["sample_index"] = sample_index.astype(np.int64)
+    return GlobalSpikeTrain(**kwargs)
 
 
 ### METRICS ZONE ###
@@ -946,8 +994,22 @@ def add_sorting_analyzer_to_nwbfile(
     if electrical_series is not None:
         container_kwargs["source_electrical_series"] = electrical_series
 
+    # -- recording-provenance metadata (stored so recordingless readers need not guess) --
+    # t_start is read from the sorting's clock: the same origin nwbfile.units.spike_times
+    # and the global spike train use, so the reader can invert times back to frames. It is
+    # always defined (0 when the sorting has no time registration). num_samples and
+    # is_filtered are properties of the recording, stored only when one is present.
+    container_kwargs["t_start"] = float(sorting_analyzer.sorting.sample_index_to_time(0))
+    if sorting_analyzer.has_recording():
+        recording = sorting_analyzer.recording
+        container_kwargs["num_samples"] = np.int64(recording.get_num_samples())
+        container_kwargs["is_filtered"] = bool(recording.is_filtered())
+
     container = SpikeSortingContainer(**container_kwargs)
     container.spike_sorting_extensions = extensions
+    container.global_spike_train = _build_global_spike_train(
+        sorting_analyzer, include_sample_index=electrical_series is not None
+    )
 
     # -- add to processing module --
     if "ecephys" in nwbfile.processing:
@@ -1004,10 +1066,14 @@ def read_sorting_analyzer_from_nwb(
         sampling_frequency = container.sampling_frequency
 
         # -- Load sorting --
+        # Use the stored recording origin so reconstructed spike times carry the
+        # correct offset; fall back to 0.0 for files written before t_start existed.
+        stored_t_start = getattr(container, "t_start", None)
+        t_start = float(stored_t_start) if stored_t_start is not None else 0.0
         sorting = NwbSortingExtractor(
             file_path=nwbfile_path,
             sampling_frequency=sampling_frequency,
-            t_start=0.0,
+            t_start=t_start,
         )
 
         # -- Load recording (if linked) --
