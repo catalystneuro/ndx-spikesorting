@@ -1,6 +1,8 @@
 # Changelog for ndx-spikesorting
 
-# v0.1.1 (Upcoming)
+# v0.1.1
+
+**Released: Nov 10th 2026**
 
 ### Fixes
 
@@ -21,3 +23,10 @@
 ### Dependencies
 
 * Depends on `neuroconv>=0.10` and support for Python 3.11-3.13
+
+
+# v0.1.0
+
+**Released: Jun 10th 2026**
+
+First release
