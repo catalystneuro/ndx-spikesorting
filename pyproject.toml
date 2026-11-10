@@ -109,6 +109,7 @@ constraint-dependencies = ["numcodecs<0.16"]
 
 [tool.codespell]
 skip = "htmlcov,.git,.mypy_cache,.pytest_cache,.coverage,*.pdf,*.svg,venvs,.tox,./docs/_build/*,*.ipynb"
+ignore-words-list = "sortings"
 
 [tool.coverage.run]
 branch = true
