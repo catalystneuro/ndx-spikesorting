@@ -1062,6 +1062,46 @@ def _nwb_object_path(obj, nwbfile) -> str:
     return f"processing/{obj.parent.name}/{obj.name}"
 
 
+def _rec_attributes_from_container(container, nwbfile, sorting) -> dict:
+    """The ``rec_attributes`` of a recordingless analyzer, built from the container and the electrodes table.
+
+    Channel ids come from the ``channel_name`` column (or the rows themselves), and the probe from
+    ``rel_x``/``rel_y`` when present. The traces' duration and dtype are not stored, so the recording is
+    taken to end at the last spike, in float32.
+    """
+    from probeinterface import Probe, ProbeGroup
+
+    electrodes = nwbfile.electrodes
+    rows = np.asarray(container.electrodes.data[:], dtype=np.int64)
+    if "channel_name" in electrodes.colnames:
+        channel_ids = np.array([str(electrodes["channel_name"][row]) for row in rows])
+    else:
+        channel_ids = rows
+
+    probegroup = None
+    if {"rel_x", "rel_y"} <= set(electrodes.colnames):
+        probe = Probe(ndim=2)
+        probe.set_contacts(
+            positions=np.column_stack([np.asarray(electrodes[column].data[:])[rows] for column in ("rel_x", "rel_y")])
+        )
+        probe.set_device_channel_indices(np.arange(len(rows)))
+        probegroup = ProbeGroup()
+        probegroup.add_probe(probe)
+
+    spike_vector = sorting.to_spike_vector()
+    num_samples = int(spike_vector["sample_index"].max()) + 1 if len(spike_vector) > 0 else 0
+    return dict(
+        channel_ids=channel_ids,
+        sampling_frequency=container.sampling_frequency,
+        num_channels=len(rows),
+        num_samples=[num_samples],
+        is_filtered=True,
+        properties={},
+        dtype=np.dtype("float32"),
+        probegroup=probegroup,
+    )
+
+
 def read_sorting_analyzer_from_nwb(
     nwbfile_path: str | Path,
     container_path: str = "ecephys/spike_sorting",
@@ -1089,7 +1129,7 @@ def read_sorting_analyzer_from_nwb(
     from pathlib import Path
 
     from pynwb import NWBHDF5IO
-    from spikeinterface.core import ChannelSparsity, create_sorting_analyzer
+    from spikeinterface.core import ChannelSparsity, NumpySorting, SortingAnalyzer, create_sorting_analyzer
     from spikeinterface.extractors.nwbextractors import NwbRecordingExtractor, NwbSortingExtractor
 
     nwbfile_path = Path(nwbfile_path)
@@ -1133,10 +1173,15 @@ def read_sorting_analyzer_from_nwb(
                 positions = _electrode_rows_to_channel_positions(electrode_rows, es_rows)
                 recording = recording.select_channels(recording.channel_ids[positions])
 
+        # -- Without a linked recording, the analyzer is recordingless and its channels come from the container --
+        rec_attributes = None
+        if recording is None:
+            rec_attributes = _rec_attributes_from_container(container, nwbfile, sorting)
+
         # -- Build sparsity from stored mask --
         sparsity = None
         if container.sparsity_mask is not None:
-            channel_ids = recording.channel_ids if recording is not None else np.array(container.electrodes.data[:])
+            channel_ids = recording.channel_ids if recording is not None else rec_attributes["channel_ids"]
             sparsity = ChannelSparsity(
                 mask=np.array(container.sparsity_mask[:], dtype=bool),
                 unit_ids=sorting.unit_ids,
@@ -1144,13 +1189,22 @@ def read_sorting_analyzer_from_nwb(
             )
 
         # -- Create in-memory SortingAnalyzer --
-        sorting_analyzer = create_sorting_analyzer(
-            sorting=sorting,
-            recording=recording,
-            format="memory",
-            sparse=False,
-            sparsity=sparsity,
-        )
+        if recording is not None:
+            sorting_analyzer = create_sorting_analyzer(
+                sorting=sorting,
+                recording=recording,
+                format="memory",
+                sparse=False,
+                sparsity=sparsity,
+            )
+        else:
+            sorting_analyzer = SortingAnalyzer(
+                sorting=NumpySorting.from_sorting(sorting, with_metadata=True, copy_spike_vector=True),
+                recording=None,
+                rec_attributes=rec_attributes,
+                format="memory",
+                sparsity=sparsity,
+            )
 
         # -- Instantiate precomputed extensions --
         extensions = container.spike_sorting_extensions
@@ -1281,7 +1335,14 @@ def _load_waveforms(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
 
     ext_class = get_extension_class("waveforms")
     ext = ext_class(sorting_analyzer)
-    ext.set_params()
+    # Set directly: spikeinterface's `set_params` reads the recording even when `dtype` is given, which a
+    # recordingless analyzer does not have. The window comes from the stored peak index, as for templates.
+    peak_sample_index = waveforms_nwb.peak_sample_index
+    ext.params = dict(
+        ms_before=float(peak_sample_index / sorting_analyzer.sampling_frequency * 1000.0),
+        ms_after=float((num_samples - peak_sample_index) / sorting_analyzer.sampling_frequency * 1000.0),
+        dtype=all_waveforms.dtype.str,
+    )
     ext.data["waveforms"] = all_waveforms
     ext.run_info = {"run_completed": True, "runtime_s": 0.0}
     sorting_analyzer.extensions["waveforms"] = ext

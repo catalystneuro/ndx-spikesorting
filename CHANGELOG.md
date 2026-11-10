@@ -6,6 +6,7 @@
 
 ### Fixes
 
+* `read_sorting_analyzer_from_nwb` reads a container that links no `ElectricalSeries` (e.g. a file with only the sorting, or only LFP) as a recordingless `SortingAnalyzer`. Its channel ids, probe and sparsity come from the electrodes table and the container. The waveforms extension also gets its `ms_before`/`ms_after` from the stored peak index instead of the defaults.
 * `add_sorting_analyzer_to_nwbfile` no longer assumes the analyzer owns the electrodes and units tables. The container's `electrodes` region and the `electrodes` regions of `Templates`, `Waveforms` and `PCAProjectionsByChannel` now store the electrodes-table rows of the analyzer's channels (matched by `channel_name`, or given with the new `electrode_indices`), and `units_region` stores the rows of its units (matched by `unit_name`). This makes files from multi-probe sessions, or with units from several sortings, read back correctly. `read_sorting_analyzer_from_nwb` reads only the units and channels the container references, so files written before this change read the same way.
 * `add_sorting_analyzer_to_nwbfile` takes a `units_table` object instead of `unit_table_name`, which looked the name up as a processing module. All metrics now go to that table, so a units table in processing works.
 * With an explicit `electrical_series_name`, `add_sorting_analyzer_to_nwbfile` checks that the series covers the analyzer's electrodes. The error for several series and no name lists each candidate's electrodes rows.
