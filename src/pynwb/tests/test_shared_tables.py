@@ -25,6 +25,9 @@ def analyzer():
     recording, sorting = generate_ground_truth_recording(
         durations=[5.0], num_units=NUM_UNITS, num_channels=NUM_CHANNELS, seed=0
     )
+    # TODO: remove once neuroconv>0.10.2 (PR #2067) writes probe locations itself
+    for key, column in zip(("rel_x", "rel_y"), recording.get_channel_locations().T):
+        recording.set_property(key, column)
     sorting_analyzer = create_sorting_analyzer(sorting=sorting, recording=recording, format="memory", sparse=True)
     sorting_analyzer.compute(
         {
