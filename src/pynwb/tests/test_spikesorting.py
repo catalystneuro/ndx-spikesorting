@@ -2307,12 +2307,10 @@ class TestUnitsMetricsTimeSupportLinkRoundtrip(TestCase):
             session_start_time=self.datetime.now(self.timezone.utc),
         )
         self.add_recording_to_nwbfile(self.recording, nwbfile=nwbfile, write_as="raw", iterator_type=None)
-        self.add_sorting_to_nwbfile(self.sorting, nwbfile=nwbfile, write_as="units")
-        if units_unit_ids is not None:
-            # Permute the unit_name column to simulate a units table whose row
-            # order does not match the analyzer's unit_ids order.
-            unit_name_col = nwbfile.units["unit_name"]
-            unit_name_col.data[:] = units_unit_ids
+        # Writing the units in `units_unit_ids` order simulates a units table whose
+        # row order does not match the analyzer's unit_ids order.
+        sorting = self.sorting if units_unit_ids is None else self.sorting.select_units(units_unit_ids)
+        self.add_sorting_to_nwbfile(sorting, nwbfile=nwbfile, write_as="units")
         return nwbfile
 
     def test_periods_round_trip_via_link(self):
