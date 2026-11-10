@@ -21,11 +21,11 @@ jobs:
       matrix:
         include:
           - { name: linux-python3.11-minimum     , requirements: minimum    , python-ver: "3.11", os: ubuntu-latest }
-          - { name: linux-python3.14             , requirements: upgraded   , python-ver: "3.14", os: ubuntu-latest }
+          - { name: linux-python3.13             , requirements: upgraded   , python-ver: "3.13", os: ubuntu-latest }
           - { name: windows-python3.11-minimum   , requirements: minimum    , python-ver: "3.11", os: windows-latest }
-          - { name: windows-python3.14           , requirements: upgraded   , python-ver: "3.14", os: windows-latest }
+          - { name: windows-python3.13           , requirements: upgraded   , python-ver: "3.13", os: windows-latest }
           - { name: macos-python3.11-minimum     , requirements: minimum    , python-ver: "3.11", os: macos-latest }
-          - { name: macos-python3.14             , requirements: upgraded   , python-ver: "3.14", os: macos-latest }
+          - { name: macos-python3.13             , requirements: upgraded   , python-ver: "3.13", os: macos-latest }
     steps:
       - name: Checkout repo
         uses: actions/checkout@v6
