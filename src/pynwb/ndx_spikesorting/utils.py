@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from hdmf.common import VectorData, VectorIndex, DynamicTableRegion
+from hdmf.common import DynamicTable, VectorData, VectorIndex, DynamicTableRegion
 from pynwb import NWBFile
 from pynwb import get_type_map
 from pynwb.ecephys import ElectricalSeries
@@ -88,7 +88,9 @@ def _columns_supporting_periods() -> set[str]:
     return cols
 
 
-def templates_to_dense(templates: Templates, num_channels: int) -> np.ndarray:
+def templates_to_dense(
+    templates: Templates, num_channels: int, electrode_rows: np.ndarray | None = None
+) -> np.ndarray:
     """Convert sparse ragged templates to a dense 3D array.
 
     Reconstructs a dense array of shape ``(num_units, num_samples, num_channels)``
@@ -103,6 +105,12 @@ def templates_to_dense(templates: Templates, num_channels: int) -> np.ndarray:
         Total number of channels in the recording. Required because the
         sparse representation does not store inactive channels, so the
         total count cannot be inferred from the data alone.
+    electrode_rows : numpy.ndarray or None, optional
+        The electrodes-table rows of the analyzer's channels, in channel order
+        (``SpikeSortingContainer.electrodes.data``). Used to map the rows stored in
+        ``templates.electrodes`` back to channel positions. If *None*, the stored
+        rows are taken as channel positions, which holds when the analyzer's
+        channels are rows ``0..num_channels-1``.
 
     Returns
     -------
@@ -113,6 +121,8 @@ def templates_to_dense(templates: Templates, num_channels: int) -> np.ndarray:
     sparse_data = templates.data.data[:]
     data_index = templates.data_index.data[:]
     electrode_indices = templates.electrodes.data[:]
+    if electrode_rows is not None:
+        electrode_indices = _electrode_rows_to_channel_positions(electrode_indices, electrode_rows)
 
     num_units = len(data_index)
     num_samples = sparse_data.shape[1]
@@ -128,6 +138,53 @@ def templates_to_dense(templates: Templates, num_channels: int) -> np.ndarray:
             dense[unit_index, :, ch] = unit_sparse[i, :]
 
     return dense
+
+
+def _electrode_rows_to_channel_positions(rows, electrode_rows) -> np.ndarray:
+    """Map electrodes-table rows to positions in ``electrode_rows`` (the analyzer's channels)."""
+    row_to_position = {int(row): position for position, row in enumerate(electrode_rows)}
+    missing = sorted({int(row) for row in rows} - row_to_position.keys())
+    if missing:
+        raise ValueError(f"Electrodes-table rows {missing} are not among the sorting analyzer's electrodes.")
+    return np.array([row_to_position[int(row)] for row in rows], dtype=np.int64)
+
+
+def _channel_ids_to_electrode_rows(sorting_analyzer: "SortingAnalyzer", nwbfile: NWBFile) -> np.ndarray:
+    """Find the electrodes-table row of each ``sorting_analyzer.channel_ids`` entry.
+
+    Matches channel ids against the ``channel_name`` column (written by neuroconv).
+    Without that column, the analyzer's channels are assumed to be rows
+    ``0..num_channels-1``, which only holds when the table has exactly that many rows.
+    """
+    electrodes = nwbfile.electrodes
+    num_channels = sorting_analyzer.get_num_channels()
+    if electrodes is None:
+        raise ValueError("nwbfile has no electrodes table. Add electrodes before calling this function.")
+
+    if "channel_name" not in electrodes.colnames:
+        if len(electrodes) != num_channels:
+            raise ValueError(
+                f"The electrodes table has {len(electrodes)} rows and no 'channel_name' column, so its rows cannot "
+                f"be matched to the sorting analyzer's {num_channels} channels. Pass `electrode_indices` explicitly."
+            )
+        return np.arange(num_channels, dtype=np.int64)
+
+    channel_names = [str(name) for name in electrodes["channel_name"][:]]
+    name_to_row = {name: row for row, name in enumerate(channel_names)}
+    analyzer_names = [str(channel_id) for channel_id in sorting_analyzer.channel_ids]
+    missing = [name for name in analyzer_names if name not in name_to_row]
+    if missing:
+        raise ValueError(
+            f"sorting_analyzer.channel_ids {missing} have no matching 'channel_name' in the electrodes table. "
+            "Pass `electrode_indices` explicitly."
+        )
+    ambiguous = sorted({name for name in analyzer_names if channel_names.count(name) > 1})
+    if ambiguous:
+        raise ValueError(
+            f"Channel names {ambiguous} appear more than once in the electrodes table (e.g. one per probe), so "
+            "they cannot be matched unambiguously. Pass `electrode_indices` explicitly."
+        )
+    return np.array([name_to_row[name] for name in analyzer_names], dtype=np.int64)
 
 
 # ---------------------------------------------------------------------------
@@ -183,6 +240,7 @@ def _convert_waveforms(
     nwbfile: NWBFile,
     nwb_random_spikes: RandomSpikes,
     nbefore: int,
+    electrode_rows: np.ndarray,
 ) -> Waveforms:
     ext = sorting_analyzer.get_extension("waveforms")
     unit_ids = sorting_analyzer.unit_ids
@@ -207,7 +265,7 @@ def _convert_waveforms(
         for spike_idx in range(n_spikes_unit):
             spike_wf = unit_waveforms[spike_idx].T
             all_wf_rows.append(spike_wf)
-            all_wf_electrode_indices.extend(channel_indices)
+            all_wf_electrode_indices.extend(electrode_rows[channel_indices])
             running_row_count += len(channel_indices)
             wf_spike_cumulative.append(running_row_count)
 
@@ -249,6 +307,7 @@ def _convert_waveforms(
 def _convert_templates(
     sorting_analyzer: "SortingAnalyzer",
     nwbfile: NWBFile,
+    electrode_rows: np.ndarray,
 ) -> Templates:
     ext = sorting_analyzer.get_extension("templates")
     unit_ids = sorting_analyzer.unit_ids
@@ -271,7 +330,7 @@ def _convert_templates(
             sparse_template = template.T
 
         all_data.append(sparse_template)
-        all_electrode_indices.extend(channel_indices)
+        all_electrode_indices.extend(electrode_rows[channel_indices])
         running_row_count += len(sparse_template)
         cumulative_index.append(running_row_count)
 
@@ -358,47 +417,43 @@ def _convert_spike_vector_extension(
 ### METRICS ZONE ###
 def _add_cell_intrinsic_columns_to_units(
     sorting_analyzer: "SortingAnalyzer",
-    nwbfile: NWBFile,
-) -> None:
-    """Add canonical cell-intrinsic metric columns to ``nwbfile.units``.
+    units_table,
+) -> set[str]:
+    """Add canonical cell-intrinsic metric columns to ``units_table``.
 
     Pulls per-unit values from SI's ``metrics`` extension DataFrame and writes them
-    as typed VectorData columns on the existing ``nwbfile.units`` table. Each column
+    as typed VectorData columns on the existing units table. Each column
     carries its type tag (e.g. ``FiringRate``) so a reader can recover the canonical
     mapping back to SI extensions.
 
-    The rows of ``nwbfile.units`` are assumed to be aligned with
-    ``sorting_analyzer.unit_ids`` (neuroconv's ``add_sorting_to_nwbfile``
-    preserves this order).
+    Analyzer units are matched to table rows by id, so the table may hold other
+    units too; their rows get NaN (float metrics) or -1 (integer metrics). A column
+    that already exists (e.g. written by another analyzer sharing the table) is left
+    untouched, and its metric stays in ``UnitsMetrics`` instead.
+
+    Returns the names of the columns that were written.
     """
-    if nwbfile.units is None:
-        return
-
-    n_units = len(sorting_analyzer.unit_ids)
-    if len(nwbfile.units) != n_units:
-        raise ValueError(
-            f"Mismatch between nwbfile.units ({len(nwbfile.units)} rows) and "
-            f"sorting_analyzer.unit_ids ({n_units} units). Add the sorting to the "
-            "NWB file before calling add_sorting_analyzer_to_nwbfile."
-        )
-
     all_metrics = sorting_analyzer.get_metrics_extension_data()
     # remove dulpicate columns until SI 0.105.0 is released with a bugfix #4609
     all_metrics = all_metrics.loc[:, ~all_metrics.columns.duplicated()]
     ns_catalog = get_type_map().namespace_catalog
-    row_indices = _analyzer_unit_positions_to_units_rows(sorting_analyzer, nwbfile.units)
+    row_indices = _analyzer_unit_positions_to_units_rows(sorting_analyzer, units_table)
+    written = set()
     for metric_name, col_cls in UNITS_TYPED_COLUMNS.items():
-        if metric_name in all_metrics.columns:
+        if metric_name in all_metrics.columns and metric_name not in units_table.colnames:
             spec = ns_catalog.get_spec("ndx-spikesorting", col_cls.__name__)
             analyzer_values = all_metrics[metric_name].to_numpy()
-            nwb_ordered = np.empty_like(analyzer_values)
+            fill_value = np.nan if np.issubdtype(analyzer_values.dtype, np.floating) else -1
+            nwb_ordered = np.full(len(units_table), fill_value, dtype=analyzer_values.dtype)
             nwb_ordered[row_indices] = analyzer_values
-            nwbfile.units.add_column(
+            units_table.add_column(
                 name=metric_name,
                 description=spec.doc,
                 data=nwb_ordered,
                 col_cls=col_cls,
             )
+            written.add(metric_name)
+    return written
 
 
 def _units_table_id_lookup(units_table) -> dict[str, int]:
@@ -565,8 +620,9 @@ def _build_valid_unit_periods_and_qm_time_support(
 
 def _convert_units_metrics(
     sorting_analyzer: "SortingAnalyzer",
-    nwbfile: NWBFile,
+    units_table,
     time_support_ref=None,
+    skip_columns=frozenset(),
 ) -> UnitsMetrics | None:
     """Build a UnitsMetrics instance from SI's ``metrics`` extension.
 
@@ -587,12 +643,12 @@ def _convert_units_metrics(
     # resolve each analyzer unit_id to a nwbfile.units row index by identity
     # rather than position, so the DTR stays correct even if nwbfile.units is
     # reordered or interleaved with units we don't own.
-    dtr_data = _analyzer_unit_positions_to_units_rows(sorting_analyzer, nwbfile.units)
+    dtr_data = _analyzer_unit_positions_to_units_rows(sorting_analyzer, units_table)
     unit_column = DynamicTableRegion(
         name="unit",
         data=dtr_data,
-        description="Reference to nwbfile.units row this metric value applies to.",
-        table=nwbfile.units,
+        description="Reference to the units table row this metric value applies to.",
+        table=units_table,
     )
 
     columns = [unit_column]
@@ -605,8 +661,8 @@ def _convert_units_metrics(
     # Each metric column becomes a UnitVectorData so it can carry the optional
     # time_support reference.
     for col_name in df.columns:
-        if col_name in UNITS_TYPED_COLUMNS:
-            continue  # Skip columns that are promoted to typed VectorData on nwbfile.units
+        if col_name in skip_columns:
+            continue  # Skip columns that were promoted to typed VectorData on the units table
         col_values = df[col_name].to_numpy()
         col_kwargs = dict(
             name=col_name,
@@ -628,6 +684,7 @@ def _convert_pca_by_channel(
     sorting_analyzer: "SortingAnalyzer",
     nwbfile: NWBFile,
     nwb_waveforms: Waveforms,
+    electrode_rows: np.ndarray,
 ) -> PCAProjectionsByChannel:
     ext = sorting_analyzer.get_extension("principal_components")
     unit_ids = sorting_analyzer.unit_ids
@@ -654,7 +711,7 @@ def _convert_pca_by_channel(
         for spike_idx in range(n_spikes_unit):
             spike_pc = unit_pcs[spike_idx].T
             all_pc_rows.append(spike_pc)
-            all_pc_electrode_indices.extend(channel_indices)
+            all_pc_electrode_indices.extend(electrode_rows[channel_indices])
             running_row_count += len(channel_indices)
             pc_spike_cumulative.append(running_row_count)
 
@@ -735,16 +792,17 @@ def _convert_pca_concatenated(
 # ---------------------------------------------------------------------------
 
 
-def _convert_pca(sorting_analyzer, nwbfile, nwb_waveforms):
+def _convert_pca(sorting_analyzer, nwbfile, nwb_waveforms, electrode_rows):
     """Convert PCA extension, returning a dict with the correct attribute key."""
     pc_ext = sorting_analyzer.get_extension("principal_components")
     pc_mode = pc_ext.params.get("mode", "by_channel_local")
     if pc_mode in ("by_channel_local", "by_channel_global"):
-        return {"pca_projections_by_channel": _convert_pca_by_channel(sorting_analyzer, nwbfile, nwb_waveforms)}
+        nwb_pca = _convert_pca_by_channel(sorting_analyzer, nwbfile, nwb_waveforms, electrode_rows)
+        return {"pca_projections_by_channel": nwb_pca}
     return {"pca_projections_concatenated": _convert_pca_concatenated(sorting_analyzer, nwb_waveforms)}
 
 
-def _convert_all_extensions(sorting_analyzer, nwbfile):  # noqa: C901
+def _convert_all_extensions(sorting_analyzer, nwbfile, electrode_rows, units_table, typed_unit_columns):  # noqa: C901
     """Convert computed SortingAnalyzer extensions to NWB objects.
 
     Returns a dict mapping attribute names on ``SpikeSortingExtensions``
@@ -761,7 +819,7 @@ def _convert_all_extensions(sorting_analyzer, nwbfile):  # noqa: C901
 
     templates_ext = sorting_analyzer.get_extension("templates")
     if templates_ext is not None:
-        converted["templates"] = _convert_templates(sorting_analyzer, nwbfile)
+        converted["templates"] = _convert_templates(sorting_analyzer, nwbfile, electrode_rows)
     nbefore = templates_ext.nbefore if templates_ext is not None else None
 
     if _has("waveforms"):
@@ -770,7 +828,7 @@ def _convert_all_extensions(sorting_analyzer, nwbfile):  # noqa: C901
         if nbefore is None:
             raise ValueError("Waveforms extension requires templates to be computed (for nbefore).")
         converted["waveforms"] = _convert_waveforms(
-            sorting_analyzer, nwbfile, converted["random_spikes"], nbefore
+            sorting_analyzer, nwbfile, converted["random_spikes"], nbefore, electrode_rows
         )
 
     if _has("noise_levels"):
@@ -798,7 +856,7 @@ def _convert_all_extensions(sorting_analyzer, nwbfile):  # noqa: C901
     if _has("principal_components"):
         if "waveforms" not in converted:
             raise ValueError("PCA projections require waveforms to be computed.")
-        converted.update(_convert_pca(sorting_analyzer, nwbfile, converted["waveforms"]))
+        converted.update(_convert_pca(sorting_analyzer, nwbfile, converted["waveforms"], electrode_rows))
 
     # Build interval tables: a ValidUnitPeriods if the SI valid_unit_periods
     # extension exists, and/or a plain TimeIntervals if quality_metrics has its
@@ -807,7 +865,7 @@ def _convert_all_extensions(sorting_analyzer, nwbfile):  # noqa: C901
     # supporting metric columns (the qm-derived TimeIntervals when periods
     # diverge, the ValidUnitPeriods when they coincide or only it exists).
     vup, qm_ts, ts_ref = _build_valid_unit_periods_and_qm_time_support(
-        sorting_analyzer, units_table=nwbfile.units
+        sorting_analyzer, units_table=units_table
     )
     if vup is not None:
         converted["__valid_unit_periods__"] = vup
@@ -817,24 +875,26 @@ def _convert_all_extensions(sorting_analyzer, nwbfile):  # noqa: C901
     # Run-dependent metrics flow into a UnitsMetrics instance (or several, as
     # support for multiple curation runs is added). For v1 there is one
     # UnitsMetrics per file, sourced from SI's quality_metrics extension.
-    units_metrics = _convert_units_metrics(sorting_analyzer, nwbfile, time_support_ref=ts_ref)
+    units_metrics = _convert_units_metrics(
+        sorting_analyzer, units_table, time_support_ref=ts_ref, skip_columns=typed_unit_columns
+    )
     if units_metrics is not None:
         converted["__units_metrics__"] = units_metrics
 
     return converted
 
 
-def _build_extensions(sorting_analyzer, nwbfile):
+def _build_extensions(sorting_analyzer, nwbfile, electrode_rows, units_table):
     """Convert extensions and assemble a SpikeSortingExtensions object.
 
-    Cell-intrinsic metric columns are added directly to ``nwbfile.units``
+    Cell-intrinsic metric columns are added directly to ``units_table``
     (a side effect) rather than to the extensions container, because they
     are per-unit properties of the cells themselves.
     """
-    # Side effect: write cell-intrinsic metric columns onto nwbfile.units.
-    _add_cell_intrinsic_columns_to_units(sorting_analyzer, nwbfile)
+    # Side effect: write cell-intrinsic metric columns onto the units table.
+    typed_unit_columns = _add_cell_intrinsic_columns_to_units(sorting_analyzer, units_table)
 
-    converted = _convert_all_extensions(sorting_analyzer, nwbfile)
+    converted = _convert_all_extensions(sorting_analyzer, nwbfile, electrode_rows, units_table, typed_unit_columns)
     extensions = SpikeSortingExtensions(name="extensions")
     for attr, obj in converted.items():
         if attr == "__units_metrics__":
@@ -857,7 +917,9 @@ def add_sorting_analyzer_to_nwbfile(
     sorting_analyzer: "SortingAnalyzer",
     nwbfile: NWBFile,
     electrical_series_name: str | None = None,
-    unit_table_name: str | None = None,
+    units_table: DynamicTable | None = None,
+    electrode_indices: list[int] | np.ndarray | None = None,
+    container_name: str = "spike_sorting",
 ):
     """Add sorting analyzer extensions to an NWBFile.
 
@@ -866,7 +928,9 @@ def add_sorting_analyzer_to_nwbfile(
     ``SpikeSortingContainer`` under the ``ecephys`` processing module.
 
     The *nwbfile* must already contain an electrodes table and a units table
-    (e.g. added via ``neuroconv``).
+    (e.g. added via ``neuroconv``). Both tables may hold rows that do not belong
+    to this analyzer (other probes, other sortings): every region written here
+    points at the rows of this analyzer's channels and units.
 
     Parameters
     ----------
@@ -877,17 +941,49 @@ def add_sorting_analyzer_to_nwbfile(
         The target NWB file. Must already have electrodes and units.
     electrical_series_name : str or None, optional
         Name of the ``ElectricalSeries`` in ``nwbfile.acquisition`` to link
-        as the source recording. If *None* and exactly one
-        ``ElectricalSeries`` exists it is used automatically. If *None* and
-        more than one exist, a ``ValueError`` is raised. If no
-        ``ElectricalSeries`` exists the link is omitted.
-    unit_table_name : str or None, optional
-        Name of the units ``DynamicTable``. If *None* the default
-        ``nwbfile.units`` is used. Raises ``ValueError`` when
-        ``nwbfile.units`` is *None*.
+        as the source recording. It must cover all of the analyzer's electrodes.
+        If *None* and exactly one ``ElectricalSeries`` exists it is used
+        automatically. If *None* and more than one exist, a ``ValueError`` is
+        raised. If no ``ElectricalSeries`` exists the link is omitted.
+    units_table : DynamicTable or None, optional
+        The units table holding the analyzer's units, matched by ``unit_name``
+        (or ``id``). If *None*, ``nwbfile.units`` is used.
+    electrode_indices : list of int or None, optional
+        The electrodes-table row of each ``sorting_analyzer.channel_ids`` entry,
+        in the same order. If *None*, rows are matched by the ``channel_name``
+        column of the electrodes table.
+    container_name : str, default: "spike_sorting"
+        Name of the ``SpikeSortingContainer``. Use a distinct name for each
+        analyzer written to the same file.
     """
     if sorting_analyzer.get_num_segments() > 1:
         raise NotImplementedError("Currently only single-segment SortingAnalyzers are supported.")
+
+    # -- resolve the container location --
+    if "ecephys" in nwbfile.processing:
+        ecephys_module = nwbfile.processing["ecephys"]
+    else:
+        ecephys_module = nwbfile.create_processing_module(
+            name="ecephys",
+            description="Extracellular electrophysiology processing results",
+        )
+    if container_name in ecephys_module.data_interfaces:
+        raise ValueError(
+            f"processing/ecephys already holds an object named '{container_name}'. "
+            "Pass a different `container_name` for each analyzer written to the same file."
+        )
+
+    # -- resolve electrodes rows --
+    num_channels = sorting_analyzer.get_num_channels()
+    if electrode_indices is None:
+        electrode_rows = _channel_ids_to_electrode_rows(sorting_analyzer, nwbfile)
+    else:
+        electrode_rows = np.asarray(electrode_indices, dtype=np.int64)
+        if len(electrode_rows) != num_channels:
+            raise ValueError(
+                f"`electrode_indices` has {len(electrode_rows)} entries but the sorting analyzer has "
+                f"{num_channels} channels."
+            )
 
     # -- resolve electrical series --
     electrical_series = None
@@ -901,43 +997,49 @@ def add_sorting_analyzer_to_nwbfile(
     elif len(es_candidates) == 1:
         electrical_series = next(iter(es_candidates.values()))
     elif len(es_candidates) > 1:
-        raise ValueError(
-            f"Multiple ElectricalSeries found in nwbfile.acquisition "
-            f"({list(es_candidates)}). Specify electrical_series_name explicitly."
+        candidates = "\n".join(
+            f"  - '{name}': electrodes rows {list(es.electrodes.data[:])}" for name, es in es_candidates.items()
         )
+        raise ValueError(
+            f"Multiple ElectricalSeries found in nwbfile.acquisition. Specify electrical_series_name explicitly. "
+            f"The sorting analyzer's channels are electrodes rows {electrode_rows.tolist()}; the candidates are:\n"
+            f"{candidates}"
+        )
+    if electrical_series is not None:
+        missing_rows = sorted(set(electrode_rows.tolist()) - set(int(r) for r in electrical_series.electrodes.data[:]))
+        if missing_rows:
+            raise ValueError(
+                f"ElectricalSeries '{electrical_series.name}' does not cover the sorting analyzer's electrodes rows "
+                f"{missing_rows}. Pass the electrical_series_name of the recording the analyzer was computed on."
+            )
 
     # -- resolve units table --
-    if unit_table_name is not None:
-        units_table = nwbfile.processing.get(unit_table_name) or nwbfile.units
-    else:
+    if units_table is None:
         units_table = nwbfile.units
     if units_table is None:
         raise ValueError("nwbfile has no units table. Add units before calling this function.")
 
     # -- build electrode & unit regions --
-    num_channels = sorting_analyzer.get_num_channels()
     electrodes_region = nwbfile.create_electrode_table_region(
-        region=list(range(num_channels)),
+        region=electrode_rows.tolist(),
         description="All electrodes used in sorting analysis",
     )
-
-    num_units = len(sorting_analyzer.unit_ids)
     units_region = DynamicTableRegion(
         name="units_region",
-        data=list(range(num_units)),
+        data=_analyzer_unit_positions_to_units_rows(sorting_analyzer, units_table),
         description="All units from sorting analysis",
         table=units_table,
     )
 
     # -- convert & assemble extensions --
-    extensions = _build_extensions(sorting_analyzer, nwbfile)
+    extensions = _build_extensions(sorting_analyzer, nwbfile, electrode_rows, units_table)
 
     # -- assemble SpikeSortingContainer --
     sparsity = sorting_analyzer.sparsity
     sparsity_mask = sparsity.mask if sparsity is not None else None
 
     container_kwargs = dict(
-        name="spike_sorting",
+        name=container_name,
         sampling_frequency=sorting_analyzer.sampling_frequency,
         electrodes=electrodes_region,
         units_region=units_region,
@@ -948,16 +1050,16 @@ def add_sorting_analyzer_to_nwbfile(
 
     container = SpikeSortingContainer(**container_kwargs)
     container.spike_sorting_extensions = extensions
-
-    # -- add to processing module --
-    if "ecephys" in nwbfile.processing:
-        ecephys_module = nwbfile.processing["ecephys"]
-    else:
-        ecephys_module = nwbfile.create_processing_module(
-            name="ecephys",
-            description="Extracellular electrophysiology processing results",
-        )
     ecephys_module.add(container)
+
+
+def _nwb_object_path(obj, nwbfile) -> str:
+    """Path of a units table or ElectricalSeries inside the file, as the SpikeInterface NWB extractors expect it."""
+    if obj is nwbfile.units:
+        return "units"
+    if obj.parent is nwbfile:
+        return f"acquisition/{obj.name}"
+    return f"processing/{obj.parent.name}/{obj.name}"
 
 
 def read_sorting_analyzer_from_nwb(
@@ -1003,19 +1105,33 @@ def read_sorting_analyzer_from_nwb(
         container = obj
         sampling_frequency = container.sampling_frequency
 
-        # -- Load sorting --
+        # -- Load sorting, restricted to the units this container references --
+        units_region = container.units_region
+        units_table = units_region.table
         sorting = NwbSortingExtractor(
             file_path=nwbfile_path,
             sampling_frequency=sampling_frequency,
             t_start=0.0,
+            unit_table_path=_nwb_object_path(units_table, nwbfile),
         )
+        row_to_id = {row: uid for uid, row in _units_table_id_lookup(units_table).items()}
+        str_id_to_sorting_id = {str(uid): uid for uid in sorting.unit_ids}
+        container_unit_ids = [str_id_to_sorting_id[row_to_id[int(row)]] for row in units_region.data[:]]
+        if list(sorting.unit_ids) != container_unit_ids:
+            sorting = sorting.select_units(container_unit_ids)
 
-        # -- Load recording (if linked) --
+        # -- Load recording (if linked), restricted to the analyzer's electrodes --
+        electrode_rows = np.asarray(container.electrodes.data[:], dtype=np.int64)
         recording = None
         if container.source_electrical_series is not None:
             es = container.source_electrical_series
-            es_path = f"acquisition/{es.name}"
-            recording = NwbRecordingExtractor(file_path=nwbfile_path, electrical_series_path=es_path)
+            recording = NwbRecordingExtractor(
+                file_path=nwbfile_path, electrical_series_path=_nwb_object_path(es, nwbfile)
+            )
+            es_rows = np.asarray(es.electrodes.data[:], dtype=np.int64)
+            if not np.array_equal(es_rows, electrode_rows):
+                positions = _electrode_rows_to_channel_positions(electrode_rows, es_rows)
+                recording = recording.select_channels(recording.channel_ids[positions])
 
         # -- Build sparsity from stored mask --
         sparsity = None
@@ -1041,7 +1157,7 @@ def read_sorting_analyzer_from_nwb(
         if extensions is not None:
             _load_random_spikes(extensions, sorting_analyzer)
             _load_waveforms(extensions, sorting_analyzer)
-            _load_templates(extensions, sorting_analyzer)
+            _load_templates(extensions, sorting_analyzer, electrode_rows)
             _load_noise_levels(extensions, sorting_analyzer)
             _load_unit_locations(extensions, sorting_analyzer)
             _load_correlograms(extensions, sorting_analyzer)
@@ -1054,11 +1170,10 @@ def read_sorting_analyzer_from_nwb(
             _load_units_metrics(extensions, sorting_analyzer)
             _load_valid_unit_periods_from_nwb(extensions, sorting_analyzer)
 
-        # Cell-intrinsic metrics live on nwbfile.units as typed columns; read
+        # Cell-intrinsic metrics live on the units table as typed columns; read
         # them by column type so the SI extension binding survives even if a
         # column was renamed.
-        if nwbfile.units is not None:
-            _load_cell_intrinsic_from_units(nwbfile.units, sorting_analyzer)
+        _load_cell_intrinsic_from_units(units_region, sorting_analyzer)
 
     return sorting_analyzer
 
@@ -1172,7 +1287,7 @@ def _load_waveforms(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
     sorting_analyzer.extensions["waveforms"] = ext
 
 
-def _load_templates(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
+def _load_templates(extensions, sorting_analyzer: "SortingAnalyzer", electrode_rows=None) -> None:
     """Instantiate the templates extension if present in the NWB container.
 
     Converts the sparse ragged NWB representation back to SpikeInterface's
@@ -1191,7 +1306,7 @@ def _load_templates(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
     ms_before = peak_sample_index / sorting_analyzer.sampling_frequency * 1000.0
     ms_after = (num_samples - peak_sample_index) / sorting_analyzer.sampling_frequency * 1000.0
 
-    dense_templates = templates_to_dense(templates_nwb, num_channels)
+    dense_templates = templates_to_dense(templates_nwb, num_channels, electrode_rows)
 
     ext_class = get_extension_class("templates")
     ext = ext_class(sorting_analyzer)
@@ -1345,8 +1460,8 @@ def _load_amplitude_scalings(extensions, sorting_analyzer: "SortingAnalyzer") ->
     sorting_analyzer.extensions["amplitude_scalings"] = ext
 
 
-def _load_cell_intrinsic_from_units(units_table, sorting_analyzer: "SortingAnalyzer") -> None:
-    """Read canonical cell-intrinsic typed columns from a Units table.
+def _load_cell_intrinsic_from_units(units_region, sorting_analyzer: "SortingAnalyzer") -> None:
+    """Read canonical cell-intrinsic typed columns from the rows of a Units table that ``units_region`` references.
 
     Walks the Units table columns, finds those that are instances of canonical
     typed VectorData classes, and populates the corresponding SI extension
@@ -1360,10 +1475,11 @@ def _load_cell_intrinsic_from_units(units_table, sorting_analyzer: "SortingAnaly
     import pandas as pd
     from spikeinterface.core.sortinganalyzer import get_extension_class
 
-    # Build a reordering map from nwbfile.units rows to analyzer unit positions
-    # so cell-intrinsic values are associated with the correct units.
-    row_to_analyzer_pos = _dtr_rows_to_analyzer_positions_from_table(units_table, sorting_analyzer)
-    reorder = np.argsort(row_to_analyzer_pos)
+    # Only the rows this container references belong to the analyzer; map each
+    # of them to its analyzer unit position so values land on the right units.
+    units_table = units_region.table
+    rows = np.asarray(units_region.data[:], dtype=np.int64)
+    analyzer_positions = _dtr_rows_to_analyzer_positions(units_region, sorting_analyzer)
 
     for col_name in units_table.colnames:
         col = units_table[col_name]
@@ -1372,7 +1488,8 @@ def _load_cell_intrinsic_from_units(units_table, sorting_analyzer: "SortingAnaly
                 raw_values = np.asarray(col.data[:])
                 if raw_values.ndim > 1:
                     raw_values = raw_values[:, 0]
-                reordered_values = raw_values[reorder]
+                reordered_values = np.empty(len(analyzer_positions), dtype=raw_values.dtype)
+                reordered_values[analyzer_positions] = raw_values[rows]
                 target_extensions = find_extension_metric_targets(metric_name)
                 for si_ext_name in target_extensions:
                     metric_ext = sorting_analyzer.extensions.get(si_ext_name)
@@ -1382,8 +1499,8 @@ def _load_cell_intrinsic_from_units(units_table, sorting_analyzer: "SortingAnaly
                         existing_df = metric_ext.get_data()
                         if metric_name not in existing_df:
                             existing_df[metric_name] = reordered_values
-                        metric_ext.params.setdefault("metric_names", []).append(metric_name)
-                        metric_ext.params["metrics_to_compute"] = list(metric_ext.params["metric_names"])
+                            metric_ext.params.setdefault("metric_names", []).append(metric_name)
+                            metric_ext.params["metrics_to_compute"] = list(metric_ext.params["metric_names"])
                     else:
                         # If the extension is not available, make it from scratch so the metric can be added to it.
                         # This allows cell-intrinsic metrics to be loaded even when their extension's UnitsMetrics 
@@ -1519,28 +1636,6 @@ def _dtr_rows_to_analyzer_positions(unit_dtr, sorting_analyzer) -> np.ndarray:
                 f"but that id is not in sorting_analyzer.unit_ids: {list(analyzer_id_to_pos.keys())}"
             )
         out[i] = analyzer_id_to_pos[uid]
-    return out
-
-
-def _dtr_rows_to_analyzer_positions_from_table(units_table, sorting_analyzer) -> np.ndarray:
-    """Map every row in a units table to the corresponding analyzer unit position.
-
-    Returns an array of length ``len(units_table)`` where ``out[row_idx]`` is the
-    positional index into ``sorting_analyzer.unit_ids`` for the unit at that row.
-    Uses the same id-resolution logic as ``_dtr_rows_to_analyzer_positions``.
-    """
-    row_to_id = {row_idx: uid for uid, row_idx in _units_table_id_lookup(units_table).items()}
-    analyzer_id_to_pos = {str(uid): pos for pos, uid in enumerate(sorting_analyzer.unit_ids)}
-    n_rows = len(units_table)
-    out = np.empty(n_rows, dtype=np.int64)
-    for row_idx in range(n_rows):
-        uid = row_to_id[row_idx]
-        if uid not in analyzer_id_to_pos:
-            raise ValueError(
-                f"nwbfile.units row {row_idx} (unit id {uid!r}) is not in "
-                f"sorting_analyzer.unit_ids: {list(analyzer_id_to_pos.keys())}"
-            )
-        out[row_idx] = analyzer_id_to_pos[uid]
     return out
 
 
