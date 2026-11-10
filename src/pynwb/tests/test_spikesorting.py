@@ -1880,6 +1880,10 @@ def _create_sorting_analyzer(compute_all: bool = True):
         num_channels=10,
         seed=42,
     )
+    # TODO: remove once neuroconv>0.10.2 (PR #2067) writes probe locations itself
+    for k, col in zip(("rel_x", "rel_y"), recording.get_channel_locations().T):
+        recording.set_property(k, col)
+
     sorting_analyzer = create_sorting_analyzer(
         sorting=sorting,
         recording=recording,
@@ -2261,6 +2265,10 @@ class TestUnitsMetricsTimeSupportLinkRoundtrip(TestCase):
         recording, sorting = generate_ground_truth_recording(
             durations=[5.0], num_units=3, num_channels=8, seed=42
         )
+        # TODO: remove once neuroconv>0.10.2 (PR #2067) writes probe locations itself
+        for k, col in zip(("rel_x", "rel_y"), recording.get_channel_locations().T):
+            recording.set_property(k, col)
+
         self.recording, self.sorting = recording, sorting
         self.sorting_analyzer = create_sorting_analyzer(
             sorting=sorting, recording=recording, format="memory", sparse=True

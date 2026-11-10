@@ -988,7 +988,7 @@ def read_sorting_analyzer_from_nwb(
 
     from pynwb import NWBHDF5IO
     from spikeinterface.core import ChannelSparsity, create_sorting_analyzer
-    from spikeinterface.extractors import NwbRecordingExtractor, NwbSortingExtractor
+    from spikeinterface.extractors.nwbextractors import NwbRecordingExtractor, NwbSortingExtractor
 
     nwbfile_path = Path(nwbfile_path)
 

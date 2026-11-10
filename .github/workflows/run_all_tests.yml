@@ -4,8 +4,6 @@ on:
     branches:
       - main
   pull_request:
-  schedule:
-    - cron: '0 5 * * 0'  # once every Sunday at midnight ET
   workflow_dispatch:
 
 jobs:
@@ -22,11 +20,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: linux-python3.10-minimum     , requirements: minimum    , python-ver: "3.10", os: ubuntu-latest }
+          - { name: linux-python3.11-minimum     , requirements: minimum    , python-ver: "3.11", os: ubuntu-latest }
           - { name: linux-python3.13             , requirements: upgraded   , python-ver: "3.13", os: ubuntu-latest }
-          - { name: windows-python3.10-minimum   , requirements: minimum    , python-ver: "3.10", os: windows-latest }
+          - { name: windows-python3.11-minimum   , requirements: minimum    , python-ver: "3.11", os: windows-latest }
           - { name: windows-python3.13           , requirements: upgraded   , python-ver: "3.13", os: windows-latest }
-          - { name: macos-python3.10-minimum     , requirements: minimum    , python-ver: "3.10", os: macos-latest }
+          - { name: macos-python3.11-minimum     , requirements: minimum    , python-ver: "3.11", os: macos-latest }
           - { name: macos-python3.13             , requirements: upgraded   , python-ver: "3.13", os: macos-latest }
     steps:
       - name: Checkout repo
