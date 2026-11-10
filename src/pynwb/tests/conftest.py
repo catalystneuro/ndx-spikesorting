@@ -23,6 +23,10 @@ def sorting_analyzer_with_extensions():
         num_channels=10,
         seed=42,
     )
+    # TODO: remove once neuroconv>0.10.2 (PR #2067) writes probe locations itself
+    for k, col in zip(("rel_x", "rel_y"), recording.get_channel_locations().T):
+        recording.set_property(k, col)
+
     sa = create_sorting_analyzer(
         sorting=sorting,
         recording=recording,
