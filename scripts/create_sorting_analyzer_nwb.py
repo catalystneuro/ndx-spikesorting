@@ -130,7 +130,10 @@ add_sorting_to_nwbfile(sorting, nwbfile=nwbfile, write_as="units")
 
 # ---- Step 3: Add sorting analyzer extensions to NWB ----
 
-add_sorting_analyzer_to_nwbfile(sorting_analyzer=sorting_analyzer, nwbfile=nwbfile)
+(series_name,) = nwbfile.acquisition
+add_sorting_analyzer_to_nwbfile(
+    sorting_analyzer=sorting_analyzer, nwbfile=nwbfile, electrical_series_name=f"acquisition/{series_name}"
+)
 
 # ---- Step 4: Write to disk ----
 

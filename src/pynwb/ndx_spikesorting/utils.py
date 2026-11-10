@@ -913,6 +913,29 @@ def _build_extensions(sorting_analyzer, nwbfile, electrode_rows, units_table):
 # ---------------------------------------------------------------------------
 
 
+def _get_electrical_series_by_path(nwbfile: NWBFile, path: str) -> ElectricalSeries:
+    """The ElectricalSeries at ``path``, e.g. ``"acquisition/ElectricalSeries"``; a bare name is in acquisition."""
+    # Not spikeinterface's `_retrieve_electrical_series_pynwb`: it keys series by their dataset's path in the file,
+    # which an in-memory NWBFile being written does not have yet (`data` is an array or an iterator).
+    parts = path.strip("/").split("/")
+    if len(parts) == 1:
+        parts = ["acquisition", *parts]
+    top_level, *names = parts
+    containers = {"acquisition": nwbfile.acquisition, "processing": nwbfile.processing}
+    obj = containers.get(top_level)
+    try:
+        for name in names:
+            obj = obj[name]
+    except (KeyError, TypeError):
+        obj = None
+    if not isinstance(obj, ElectricalSeries):
+        raise ValueError(
+            f"electrical_series_name='{path}' is not the path of an ElectricalSeries in the file, e.g. "
+            "'acquisition/ElectricalSeries' or 'processing/ecephys/LFP/ElectricalSeriesLFP'."
+        )
+    return obj
+
+
 def add_sorting_analyzer_to_nwbfile(
     sorting_analyzer: "SortingAnalyzer",
     nwbfile: NWBFile,
@@ -940,11 +963,13 @@ def add_sorting_analyzer_to_nwbfile(
     nwbfile : NWBFile
         The target NWB file. Must already have electrodes and units.
     electrical_series_name : str or None, optional
-        Name of the ``ElectricalSeries`` in ``nwbfile.acquisition`` to link
-        as the source recording. It must cover all of the analyzer's electrodes.
-        If *None* and exactly one ``ElectricalSeries`` exists it is used
-        automatically. If *None* and more than one exist, a ``ValueError`` is
-        raised. If no ``ElectricalSeries`` exists the link is omitted.
+        Path inside the file of the ``ElectricalSeries`` the analyzer was computed
+        on, linked as the container's source recording, e.g.
+        ``"acquisition/ElectricalSeries"`` or ``"processing/ecephys/LFP/ElectricalSeriesLFP"``.
+        A name without a path is looked up in ``nwbfile.acquisition``. The series must
+        cover all of the analyzer's electrodes and be sampled at the analyzer's sampling
+        frequency. If *None* (default), no recording is linked, and
+        ``read_sorting_analyzer_from_nwb`` returns a recordingless analyzer.
     units_table : DynamicTable or None, optional
         The units table holding the analyzer's units, matched by ``unit_name``
         (or ``id``). If *None*, ``nwbfile.units`` is used.
@@ -985,32 +1010,23 @@ def add_sorting_analyzer_to_nwbfile(
                 f"{num_channels} channels."
             )
 
-    # -- resolve electrical series --
+    # -- resolve and validate the linked electrical series --
     electrical_series = None
-    es_candidates = {
-        name: obj
-        for name, obj in (nwbfile.acquisition or {}).items()
-        if isinstance(obj, ElectricalSeries)
-    }
     if electrical_series_name is not None:
-        electrical_series = nwbfile.acquisition[electrical_series_name]
-    elif len(es_candidates) == 1:
-        electrical_series = next(iter(es_candidates.values()))
-    elif len(es_candidates) > 1:
-        candidates = "\n".join(
-            f"  - '{name}': electrodes rows {list(es.electrodes.data[:])}" for name, es in es_candidates.items()
-        )
-        raise ValueError(
-            f"Multiple ElectricalSeries found in nwbfile.acquisition. Specify electrical_series_name explicitly. "
-            f"The sorting analyzer's channels are electrodes rows {electrode_rows.tolist()}; the candidates are:\n"
-            f"{candidates}"
-        )
-    if electrical_series is not None:
+        electrical_series = _get_electrical_series_by_path(nwbfile, electrical_series_name)
         missing_rows = sorted(set(electrode_rows.tolist()) - set(int(r) for r in electrical_series.electrodes.data[:]))
         if missing_rows:
             raise ValueError(
                 f"ElectricalSeries '{electrical_series.name}' does not cover the sorting analyzer's electrodes rows "
-                f"{missing_rows}. Pass the electrical_series_name of the recording the analyzer was computed on."
+                f"{missing_rows}. Pass the ElectricalSeries of the recording the analyzer was computed on."
+            )
+        if electrical_series.rate is not None and not np.isclose(
+            electrical_series.rate, sorting_analyzer.sampling_frequency
+        ):
+            raise ValueError(
+                f"ElectricalSeries '{electrical_series.name}' is sampled at {electrical_series.rate} Hz but the "
+                f"sorting analyzer at {sorting_analyzer.sampling_frequency} Hz (e.g. an LFP series). Pass the "
+                "ElectricalSeries of the recording the analyzer was computed on."
             )
 
     # -- resolve units table --
@@ -1053,13 +1069,14 @@ def add_sorting_analyzer_to_nwbfile(
     ecephys_module.add(container)
 
 
-def _nwb_object_path(obj, nwbfile) -> str:
-    """Path of a units table or ElectricalSeries inside the file, as the SpikeInterface NWB extractors expect it."""
-    if obj is nwbfile.units:
-        return "units"
-    if obj.parent is nwbfile:
-        return f"acquisition/{obj.name}"
-    return f"processing/{obj.parent.name}/{obj.name}"
+def _nwb_object_path(obj) -> str:
+    """Path of a units table or ElectricalSeries read from a file, as SpikeInterface's NWB extractors look it up.
+
+    Same key as ``spikeinterface.extractors.nwbextractors._retrieve_unit_table_pynwb`` and
+    ``_retrieve_electrical_series_pynwb``: the dataset's path in the file, which only exists once it is written.
+    """
+    dataset, suffix = (obj.id.data, "/id") if isinstance(obj, DynamicTable) else (obj.data, "/data")
+    return dataset.name.removesuffix(suffix).lstrip("/")
 
 
 def _rec_attributes_from_container(container, nwbfile, sorting) -> dict:
@@ -1152,7 +1169,7 @@ def read_sorting_analyzer_from_nwb(
             file_path=nwbfile_path,
             sampling_frequency=sampling_frequency,
             t_start=0.0,
-            unit_table_path=_nwb_object_path(units_table, nwbfile),
+            unit_table_path=_nwb_object_path(units_table),
         )
         row_to_id = {row: uid for uid, row in _units_table_id_lookup(units_table).items()}
         str_id_to_sorting_id = {str(uid): uid for uid in sorting.unit_ids}
@@ -1166,7 +1183,7 @@ def read_sorting_analyzer_from_nwb(
         if container.source_electrical_series is not None:
             es = container.source_electrical_series
             recording = NwbRecordingExtractor(
-                file_path=nwbfile_path, electrical_series_path=_nwb_object_path(es, nwbfile)
+                file_path=nwbfile_path, electrical_series_path=_nwb_object_path(es)
             )
             es_rows = np.asarray(es.electrodes.data[:], dtype=np.int64)
             if not np.array_equal(es_rows, electrode_rows):

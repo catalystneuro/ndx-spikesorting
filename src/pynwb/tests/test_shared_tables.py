@@ -171,7 +171,8 @@ def test_units_table_in_processing_round_trip(analyzer, tmp_path):
 def _file_with_two_probes(analyzer):
     """Analyzer channels are electrodes rows 10..19, recorded by the series neuroconv adds.
 
-    Also adds 'OtherSeries' over the other probe's rows 0..9 and 'AllSeries' over all 20 rows.
+    Also adds, over other rows or at another rate: 'OtherSeries' over the other probe's rows 0..9,
+    'AllSeries' over all 20 rows, and 'LFPSeries' over the analyzer's rows at 2.5 kHz.
     Returns the file and the name of the analyzer's own series.
     """
     from neuroconv.tools.spikeinterface import (
@@ -185,27 +186,37 @@ def _file_with_two_probes(analyzer):
     add_recording_to_nwbfile(analyzer.recording, nwbfile=nwbfile, iterator_type=None)
     add_sorting_to_nwbfile(analyzer.sorting, nwbfile=nwbfile)
     (analyzer_series_name,) = nwbfile.acquisition
-    for name, rows in (("OtherSeries", range(NUM_CHANNELS)), ("AllSeries", range(2 * NUM_CHANNELS))):
+    analyzer_rows = range(NUM_CHANNELS, 2 * NUM_CHANNELS)
+    for name, rows, rate in (
+        ("OtherSeries", range(NUM_CHANNELS), analyzer.sampling_frequency),
+        ("AllSeries", range(2 * NUM_CHANNELS), analyzer.sampling_frequency),
+        ("LFPSeries", analyzer_rows, 2500.0),
+    ):
+        num_samples = int(analyzer.get_num_samples() * rate / analyzer.sampling_frequency)
         nwbfile.add_acquisition(
             ElectricalSeries(
                 name=name,
-                data=np.zeros((analyzer.get_num_samples(), len(rows)), dtype="int16"),
+                data=np.zeros((num_samples, len(rows)), dtype="int16"),
                 electrodes=nwbfile.create_electrode_table_region(region=list(rows), description=name),
-                rate=analyzer.sampling_frequency,
+                rate=rate,
             )
         )
     return nwbfile, analyzer_series_name
 
 
-def test_several_electrical_series_require_a_name(analyzer):
+def test_no_electrical_series_is_linked_unless_passed(analyzer, tmp_path):
     nwbfile, _ = _file_with_two_probes(analyzer)
-    with pytest.raises(ValueError, match="Specify electrical_series_name explicitly"):
-        add_sorting_analyzer_to_nwbfile(analyzer, nwbfile)
+    add_sorting_analyzer_to_nwbfile(analyzer, nwbfile)
+
+    assert nwbfile.processing["ecephys"]["spike_sorting"].source_electrical_series is None
+    restored = _write_and_read(nwbfile, tmp_path / "file.nwb")
+    assert not restored.has_recording()
+    _assert_same_analyzer(restored, analyzer)
 
 
-def test_electrical_series_name_links_that_series(analyzer, tmp_path):
+def test_electrical_series_passed_is_linked(analyzer, tmp_path):
     nwbfile, series_name = _file_with_two_probes(analyzer)
-    add_sorting_analyzer_to_nwbfile(analyzer, nwbfile, electrical_series_name=series_name)
+    add_sorting_analyzer_to_nwbfile(analyzer, nwbfile, electrical_series_name=f"acquisition/{series_name}")
 
     container = nwbfile.processing["ecephys"]["spike_sorting"]
     assert container.source_electrical_series is nwbfile.acquisition[series_name]
@@ -217,7 +228,37 @@ def test_electrical_series_name_links_that_series(analyzer, tmp_path):
 def test_electrical_series_not_covering_the_analyzer_raises(analyzer):
     nwbfile, _ = _file_with_two_probes(analyzer)
     with pytest.raises(ValueError, match="does not cover"):
-        add_sorting_analyzer_to_nwbfile(analyzer, nwbfile, electrical_series_name="OtherSeries")
+        add_sorting_analyzer_to_nwbfile(analyzer, nwbfile, electrical_series_name="acquisition/OtherSeries")
+
+
+def test_electrical_series_at_another_rate_raises(analyzer):
+    nwbfile, _ = _file_with_two_probes(analyzer)
+    with pytest.raises(ValueError, match="is sampled at 2500.0 Hz"):
+        add_sorting_analyzer_to_nwbfile(analyzer, nwbfile, electrical_series_name="acquisition/LFPSeries")
+
+
+def test_electrical_series_in_processing_is_linked_by_path(analyzer, tmp_path):
+    from neuroconv.tools.spikeinterface import add_recording_to_nwbfile, add_sorting_to_nwbfile
+
+    nwbfile = _new_nwbfile()
+    # Written in processing/ecephys/LFP; the analyzer's own rate, so the rate check passes.
+    add_recording_to_nwbfile(analyzer.recording, nwbfile=nwbfile, write_as="lfp", iterator_type=None)
+    add_sorting_to_nwbfile(analyzer.sorting, nwbfile=nwbfile)
+    (series_name,) = nwbfile.processing["ecephys"]["LFP"].electrical_series
+    path = f"processing/ecephys/LFP/{series_name}"
+    add_sorting_analyzer_to_nwbfile(analyzer, nwbfile, electrical_series_name=path)
+
+    container = nwbfile.processing["ecephys"]["spike_sorting"]
+    assert container.source_electrical_series is nwbfile.processing["ecephys"]["LFP"][series_name]
+    restored = _write_and_read(nwbfile, tmp_path / "file.nwb")
+    assert restored.has_recording()
+    _assert_same_analyzer(restored, analyzer)
+
+
+def test_electrical_series_name_not_in_the_file_raises(analyzer):
+    nwbfile, _ = _file_with_two_probes(analyzer)
+    with pytest.raises(ValueError, match="is not the path of an ElectricalSeries"):
+        add_sorting_analyzer_to_nwbfile(analyzer, nwbfile, electrical_series_name="acquisition/Missing")
 
 
 def test_electrical_series_covering_more_channels_is_restricted_on_read(analyzer, tmp_path):
