@@ -789,6 +789,16 @@ def main():
                 dtype="float64",
                 doc="Sampling frequency of the recording in Hz.",
             ),
+            NWBAttributeSpec(
+                name="num_samples",
+                dtype="int64",
+                doc=(
+                    "Number of samples in the recording the analysis was computed on. Together with "
+                    "sampling_frequency it gives the recording duration, which is not otherwise stored "
+                    "when no source_electrical_series is linked."
+                ),
+                required=False,
+            ),
         ],
         datasets=[
             NWBDatasetSpec(
