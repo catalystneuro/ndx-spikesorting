@@ -248,7 +248,11 @@ def test_electrical_series_in_processing_is_linked(analyzer, tmp_path):
     add_recording_to_nwbfile(analyzer.recording, nwbfile=nwbfile, write_as="lfp", iterator_type=None)
     add_sorting_to_nwbfile(analyzer.sorting, nwbfile=nwbfile)
     (series_name,) = nwbfile.processing["ecephys"]["LFP"].electrical_series
-    add_sorting_analyzer_to_nwbfile(analyzer, nwbfile, electrical_series=nwbfile.processing["ecephys"]["LFP"][series_name])
+    add_sorting_analyzer_to_nwbfile(
+        analyzer,
+        nwbfile,
+        electrical_series=nwbfile.processing["ecephys"]["LFP"][series_name]
+    )
 
     container = nwbfile.processing["ecephys"]["spike_sorting"]
     assert container.source_electrical_series is nwbfile.processing["ecephys"]["LFP"][series_name]
