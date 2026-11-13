@@ -1995,6 +1995,7 @@ class TestAddSortingAnalyzerToNwbfile(TestCase):
             read_nwb = io.read()
             container = read_nwb.processing["ecephys"]["spike_sorting"]
             self.assertEqual(container.sampling_frequency, self.sorting_analyzer.sampling_frequency)
+            self.assertEqual(container.num_samples, self.sorting_analyzer.get_num_samples())
             ext = container.spike_sorting_extensions
             self.assertIsNotNone(ext.templates)
 

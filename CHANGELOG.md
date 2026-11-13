@@ -1,5 +1,11 @@
 # Changelog for ndx-spikesorting
 
+# v0.1.2 (Upcoming)
+
+### Features
+
+* `SpikeSortingContainer` has an optional `num_samples` attribute, the number of samples of the recording the analysis was computed on. `add_sorting_analyzer_to_nwbfile` writes it, so the recording duration is stored even when no `ElectricalSeries` is linked.
+
 # v0.1.1
 
 **Released: Nov 10th 2026**

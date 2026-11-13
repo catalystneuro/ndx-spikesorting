@@ -1041,6 +1041,7 @@ def add_sorting_analyzer_to_nwbfile(
     container_kwargs = dict(
         name=container_name,
         sampling_frequency=sorting_analyzer.sampling_frequency,
+        num_samples=np.int64(sorting_analyzer.get_num_samples()),
         electrodes=electrodes_region,
         units_region=units_region,
         sparsity_mask=sparsity_mask,
