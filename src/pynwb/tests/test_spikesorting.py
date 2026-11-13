@@ -1987,7 +1987,7 @@ class TestAddSortingAnalyzerToNwbfile(TestCase):
     def test_electrical_series_linked(self):
         """The ElectricalSeries passed is linked as the source recording."""
         (series_name, electrical_series), = self.nwbfile.acquisition.items()
-        self.add_fn(self.sorting_analyzer, self.nwbfile, electrical_series_name=f"acquisition/{series_name}")
+        self.add_fn(self.sorting_analyzer, self.nwbfile, electrical_series=electrical_series)
         container = self.nwbfile.processing["ecephys"]["spike_sorting"]
 
         self.assertIs(container.source_electrical_series, electrical_series)

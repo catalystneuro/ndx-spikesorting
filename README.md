@@ -102,7 +102,7 @@ add_recording_to_nwbfile(recording, nwbfile=nwbfile, write_as="raw", iterator_ty
 add_sorting_to_nwbfile(sorting, nwbfile=nwbfile, write_as="units")
 # Linking the recording is optional; without it the analyzer reads back recordingless
 (series_name,) = nwbfile.acquisition
-add_sorting_analyzer_to_nwbfile(sorting_analyzer, nwbfile=nwbfile, electrical_series_name=f"acquisition/{series_name}")
+add_sorting_analyzer_to_nwbfile(sorting_analyzer, nwbfile=nwbfile, electrical_series=nwbfile.acquisition[series_name])
 
 with NWBHDF5IO("demo_sorting.nwb", mode="w") as io:
     io.write(nwbfile)

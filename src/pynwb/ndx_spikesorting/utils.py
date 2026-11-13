@@ -913,33 +913,10 @@ def _build_extensions(sorting_analyzer, nwbfile, electrode_rows, units_table):
 # ---------------------------------------------------------------------------
 
 
-def _get_electrical_series_by_path(nwbfile: NWBFile, path: str) -> ElectricalSeries:
-    """The ElectricalSeries at ``path``, e.g. ``"acquisition/ElectricalSeries"``; a bare name is in acquisition."""
-    # Not spikeinterface's `_retrieve_electrical_series_pynwb`: it keys series by their dataset's path in the file,
-    # which an in-memory NWBFile being written does not have yet (`data` is an array or an iterator).
-    parts = path.strip("/").split("/")
-    if len(parts) == 1:
-        parts = ["acquisition", *parts]
-    top_level, *names = parts
-    containers = {"acquisition": nwbfile.acquisition, "processing": nwbfile.processing}
-    obj = containers.get(top_level)
-    try:
-        for name in names:
-            obj = obj[name]
-    except (KeyError, TypeError):
-        obj = None
-    if not isinstance(obj, ElectricalSeries):
-        raise ValueError(
-            f"electrical_series_name='{path}' is not the path of an ElectricalSeries in the file, e.g. "
-            "'acquisition/ElectricalSeries' or 'processing/ecephys/LFP/ElectricalSeriesLFP'."
-        )
-    return obj
-
-
 def add_sorting_analyzer_to_nwbfile(
     sorting_analyzer: "SortingAnalyzer",
     nwbfile: NWBFile,
-    electrical_series_name: str | None = None,
+    electrical_series: ElectricalSeries | None = None,
     units_table: DynamicTable | None = None,
     electrode_indices: list[int] | np.ndarray | None = None,
     container_name: str = "spike_sorting",
@@ -962,13 +939,10 @@ def add_sorting_analyzer_to_nwbfile(
         extensions.
     nwbfile : NWBFile
         The target NWB file. Must already have electrodes and units.
-    electrical_series_name : str or None, optional
-        Path inside the file of the ``ElectricalSeries`` the analyzer was computed
-        on, linked as the container's source recording, e.g.
-        ``"acquisition/ElectricalSeries"`` or ``"processing/ecephys/LFP/ElectricalSeriesLFP"``.
-        A name without a path is looked up in ``nwbfile.acquisition``. The series must
-        cover all of the analyzer's electrodes and be sampled at the analyzer's sampling
-        frequency. If *None* (default), no recording is linked, and
+    electrical_series : ElectricalSeries or None, optional
+        The ``ElectricalSeries`` the analyzer was computed on, linked as the container's
+        source recording. It must cover all of the analyzer's electrodes and be sampled at
+        the analyzer's sampling frequency. If *None* (default), no recording is linked, and
         ``read_sorting_analyzer_from_nwb`` returns a recordingless analyzer.
     units_table : DynamicTable or None, optional
         The units table holding the analyzer's units, matched by ``unit_name``
@@ -1011,9 +985,7 @@ def add_sorting_analyzer_to_nwbfile(
             )
 
     # -- resolve and validate the linked electrical series --
-    electrical_series = None
-    if electrical_series_name is not None:
-        electrical_series = _get_electrical_series_by_path(nwbfile, electrical_series_name)
+    if electrical_series is not None:
         missing_rows = sorted(set(electrode_rows.tolist()) - set(int(r) for r in electrical_series.electrodes.data[:]))
         if missing_rows:
             raise ValueError(
@@ -1097,13 +1069,16 @@ def _rec_attributes_from_container(container, nwbfile, sorting) -> dict:
 
     probegroup = None
     if {"rel_x", "rel_y"} <= set(electrodes.colnames):
-        probe = Probe(ndim=2)
-        probe.set_contacts(
-            positions=np.column_stack([np.asarray(electrodes[column].data[:])[rows] for column in ("rel_x", "rel_y")])
-        )
-        probe.set_device_channel_indices(np.arange(len(rows)))
+        # rel_x/rel_y are relative to the electrode group, so each group is its own probe (as NwbRecordingExtractor).
+        positions = np.column_stack([np.asarray(electrodes[column].data[:])[rows] for column in ("rel_x", "rel_y")])
+        group_names = np.array([str(electrodes["group_name"][row]) for row in rows])
         probegroup = ProbeGroup()
-        probegroup.add_probe(probe)
+        for group_name in dict.fromkeys(group_names):
+            (indices,) = np.nonzero(group_names == group_name)
+            probe = Probe(ndim=2)
+            probe.set_contacts(positions=positions[indices])
+            probe.set_device_channel_indices(indices)
+            probegroup.add_probe(probe)
 
     num_samples = container.num_samples
     return dict(
