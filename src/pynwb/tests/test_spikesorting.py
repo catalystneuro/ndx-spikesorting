@@ -1977,12 +1977,20 @@ class TestAddSortingAnalyzerToNwbfile(TestCase):
         expected_mask = self.sorting_analyzer.sparsity.mask
         np.testing.assert_array_equal(container.sparsity_mask, expected_mask)
 
-    def test_electrical_series_linked(self):
-        """source_electrical_series is auto-detected when exactly one exists."""
+    def test_electrical_series_not_linked_by_default(self):
+        """No ElectricalSeries is linked unless one is passed, even when the file has exactly one."""
         self.add_fn(self.sorting_analyzer, self.nwbfile)
         container = self.nwbfile.processing["ecephys"]["spike_sorting"]
 
-        self.assertIsNotNone(container.source_electrical_series)
+        self.assertIsNone(container.source_electrical_series)
+
+    def test_electrical_series_linked(self):
+        """The ElectricalSeries passed is linked as the source recording."""
+        (series_name, electrical_series), = self.nwbfile.acquisition.items()
+        self.add_fn(self.sorting_analyzer, self.nwbfile, electrical_series=electrical_series)
+        container = self.nwbfile.processing["ecephys"]["spike_sorting"]
+
+        self.assertIs(container.source_electrical_series, electrical_series)
 
     def test_writes_to_disk(self):
         """File written with add_sorting_analyzer_to_nwbfile can be re-read."""

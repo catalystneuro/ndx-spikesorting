@@ -2,6 +2,12 @@
 
 # v0.1.2 (Upcoming)
 
+### Fixes
+
+* `read_sorting_analyzer_from_nwb` reads a container that links no `ElectricalSeries` (e.g. a file with only the sorting, or only LFP) as a recordingless `SortingAnalyzer`. Its channel ids, probe and sparsity come from the electrodes table and the container. The waveforms extension also gets its `ms_before`/`ms_after` from the stored peak index instead of the defaults.
+* `add_sorting_analyzer_to_nwbfile` takes an `electrical_series` object and links it only when given; it never picks one from the file. It checks that the series covers the analyzer's electrodes and is sampled at its rate, which rules out e.g. an LFP series.
+* The recordingless probe has one `Probe` per electrode group, since `rel_x`/`rel_y` are relative to the group.
+
 ### Features
 
 * `SpikeSortingContainer` has an optional `num_samples` attribute, the number of samples of the recording the analysis was computed on. `add_sorting_analyzer_to_nwbfile` writes it, so the recording duration is stored even when no `ElectricalSeries` is linked.
@@ -14,7 +20,6 @@
 
 * `add_sorting_analyzer_to_nwbfile` no longer assumes the analyzer owns the electrodes and units tables. The container's `electrodes` region and the `electrodes` regions of `Templates`, `Waveforms` and `PCAProjectionsByChannel` now store the electrodes-table rows of the analyzer's channels (matched by `channel_name`, or given with the new `electrode_indices`), and `units_region` stores the rows of its units (matched by `unit_name`). This makes files from multi-probe sessions, or with units from several sortings, read back correctly. `read_sorting_analyzer_from_nwb` reads only the units and channels the container references, so files written before this change read the same way.
 * `add_sorting_analyzer_to_nwbfile` takes a `units_table` object instead of `unit_table_name`, which looked the name up as a processing module. All metrics now go to that table, so a units table in processing works.
-* With an explicit `electrical_series_name`, `add_sorting_analyzer_to_nwbfile` checks that the series covers the analyzer's electrodes. The error for several series and no name lists each candidate's electrodes rows.
 * Added `container_name` to `add_sorting_analyzer_to_nwbfile`, so several analyzers can be written to one file. The `firing_rate`/`num_spikes` typed columns are only added to the units table if missing; otherwise the analyzer's values stay in its `UnitsMetrics`.
 
 ### Features

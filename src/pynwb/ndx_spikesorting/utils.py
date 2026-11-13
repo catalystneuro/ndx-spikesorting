@@ -916,7 +916,7 @@ def _build_extensions(sorting_analyzer, nwbfile, electrode_rows, units_table):
 def add_sorting_analyzer_to_nwbfile(
     sorting_analyzer: "SortingAnalyzer",
     nwbfile: NWBFile,
-    electrical_series_name: str | None = None,
+    electrical_series: ElectricalSeries | None = None,
     units_table: DynamicTable | None = None,
     electrode_indices: list[int] | np.ndarray | None = None,
     container_name: str = "spike_sorting",
@@ -939,12 +939,11 @@ def add_sorting_analyzer_to_nwbfile(
         extensions.
     nwbfile : NWBFile
         The target NWB file. Must already have electrodes and units.
-    electrical_series_name : str or None, optional
-        Name of the ``ElectricalSeries`` in ``nwbfile.acquisition`` to link
-        as the source recording. It must cover all of the analyzer's electrodes.
-        If *None* and exactly one ``ElectricalSeries`` exists it is used
-        automatically. If *None* and more than one exist, a ``ValueError`` is
-        raised. If no ``ElectricalSeries`` exists the link is omitted.
+    electrical_series : ElectricalSeries or None, optional
+        The ``ElectricalSeries`` the analyzer was computed on, linked as the container's
+        source recording. It must cover all of the analyzer's electrodes and be sampled at
+        the analyzer's sampling frequency. If *None* (default), no recording is linked, and
+        ``read_sorting_analyzer_from_nwb`` returns a recordingless analyzer.
     units_table : DynamicTable or None, optional
         The units table holding the analyzer's units, matched by ``unit_name``
         (or ``id``). If *None*, ``nwbfile.units`` is used.
@@ -985,32 +984,21 @@ def add_sorting_analyzer_to_nwbfile(
                 f"{num_channels} channels."
             )
 
-    # -- resolve electrical series --
-    electrical_series = None
-    es_candidates = {
-        name: obj
-        for name, obj in (nwbfile.acquisition or {}).items()
-        if isinstance(obj, ElectricalSeries)
-    }
-    if electrical_series_name is not None:
-        electrical_series = nwbfile.acquisition[electrical_series_name]
-    elif len(es_candidates) == 1:
-        electrical_series = next(iter(es_candidates.values()))
-    elif len(es_candidates) > 1:
-        candidates = "\n".join(
-            f"  - '{name}': electrodes rows {list(es.electrodes.data[:])}" for name, es in es_candidates.items()
-        )
-        raise ValueError(
-            f"Multiple ElectricalSeries found in nwbfile.acquisition. Specify electrical_series_name explicitly. "
-            f"The sorting analyzer's channels are electrodes rows {electrode_rows.tolist()}; the candidates are:\n"
-            f"{candidates}"
-        )
+    # -- resolve and validate the linked electrical series --
     if electrical_series is not None:
         missing_rows = sorted(set(electrode_rows.tolist()) - set(int(r) for r in electrical_series.electrodes.data[:]))
         if missing_rows:
             raise ValueError(
                 f"ElectricalSeries '{electrical_series.name}' does not cover the sorting analyzer's electrodes rows "
-                f"{missing_rows}. Pass the electrical_series_name of the recording the analyzer was computed on."
+                f"{missing_rows}. Pass the ElectricalSeries of the recording the analyzer was computed on."
+            )
+        if electrical_series.rate is not None and not np.isclose(
+            electrical_series.rate, sorting_analyzer.sampling_frequency
+        ):
+            raise ValueError(
+                f"ElectricalSeries '{electrical_series.name}' is sampled at {electrical_series.rate} Hz but the "
+                f"sorting analyzer at {sorting_analyzer.sampling_frequency} Hz (e.g. an LFP series). Pass the "
+                "ElectricalSeries of the recording the analyzer was computed on."
             )
 
     # -- resolve units table --
@@ -1054,13 +1042,55 @@ def add_sorting_analyzer_to_nwbfile(
     ecephys_module.add(container)
 
 
-def _nwb_object_path(obj, nwbfile) -> str:
-    """Path of a units table or ElectricalSeries inside the file, as the SpikeInterface NWB extractors expect it."""
-    if obj is nwbfile.units:
-        return "units"
-    if obj.parent is nwbfile:
-        return f"acquisition/{obj.name}"
-    return f"processing/{obj.parent.name}/{obj.name}"
+def _nwb_object_path(obj) -> str:
+    """Path of a units table or ElectricalSeries read from a file, as SpikeInterface's NWB extractors look it up.
+
+    Same key as ``spikeinterface.extractors.nwbextractors._retrieve_unit_table_pynwb`` and
+    ``_retrieve_electrical_series_pynwb``: the dataset's path in the file, which only exists once it is written.
+    """
+    dataset, suffix = (obj.id.data, "/id") if isinstance(obj, DynamicTable) else (obj.data, "/data")
+    return dataset.name.removesuffix(suffix).lstrip("/")
+
+
+def _rec_attributes_from_container(container, nwbfile, sorting) -> dict:
+    """The ``rec_attributes`` of a recordingless analyzer, built from the container and the electrodes table.
+
+    Channel ids come from the ``channel_name`` column (or the rows themselves), and the probe from
+    ``rel_x``/``rel_y`` when present.
+    """
+    from probeinterface import Probe, ProbeGroup
+
+    electrodes = nwbfile.electrodes
+    rows = np.asarray(container.electrodes.data[:], dtype=np.int64)
+    if "channel_name" in electrodes.colnames:
+        channel_ids = np.array([str(electrodes["channel_name"][row]) for row in rows])
+    else:
+        channel_ids = rows
+
+    probegroup = None
+    if {"rel_x", "rel_y"} <= set(electrodes.colnames):
+        # rel_x/rel_y are relative to the electrode group, so each group is its own probe (as NwbRecordingExtractor).
+        positions = np.column_stack([np.asarray(electrodes[column].data[:])[rows] for column in ("rel_x", "rel_y")])
+        group_names = np.array([str(electrodes["group_name"][row]) for row in rows])
+        probegroup = ProbeGroup()
+        for group_name in dict.fromkeys(group_names):
+            (indices,) = np.nonzero(group_names == group_name)
+            probe = Probe(ndim=2)
+            probe.set_contacts(positions=positions[indices])
+            probe.set_device_channel_indices(indices)
+            probegroup.add_probe(probe)
+
+    num_samples = container.num_samples
+    return dict(
+        channel_ids=channel_ids,
+        sampling_frequency=container.sampling_frequency,
+        num_channels=len(rows),
+        num_samples=[num_samples],
+        is_filtered=True,
+        properties={},
+        dtype=np.dtype("float32"),
+        probegroup=probegroup,
+    )
 
 
 def read_sorting_analyzer_from_nwb(
@@ -1090,7 +1120,7 @@ def read_sorting_analyzer_from_nwb(
     from pathlib import Path
 
     from pynwb import NWBHDF5IO
-    from spikeinterface.core import ChannelSparsity, create_sorting_analyzer
+    from spikeinterface.core import ChannelSparsity, NumpySorting, SortingAnalyzer, create_sorting_analyzer
     from spikeinterface.extractors.nwbextractors import NwbRecordingExtractor, NwbSortingExtractor
 
     nwbfile_path = Path(nwbfile_path)
@@ -1113,7 +1143,7 @@ def read_sorting_analyzer_from_nwb(
             file_path=nwbfile_path,
             sampling_frequency=sampling_frequency,
             t_start=0.0,
-            unit_table_path=_nwb_object_path(units_table, nwbfile),
+            unit_table_path=_nwb_object_path(units_table),
         )
         row_to_id = {row: uid for uid, row in _units_table_id_lookup(units_table).items()}
         str_id_to_sorting_id = {str(uid): uid for uid in sorting.unit_ids}
@@ -1127,17 +1157,22 @@ def read_sorting_analyzer_from_nwb(
         if container.source_electrical_series is not None:
             es = container.source_electrical_series
             recording = NwbRecordingExtractor(
-                file_path=nwbfile_path, electrical_series_path=_nwb_object_path(es, nwbfile)
+                file_path=nwbfile_path, electrical_series_path=_nwb_object_path(es)
             )
             es_rows = np.asarray(es.electrodes.data[:], dtype=np.int64)
             if not np.array_equal(es_rows, electrode_rows):
                 positions = _electrode_rows_to_channel_positions(electrode_rows, es_rows)
                 recording = recording.select_channels(recording.channel_ids[positions])
 
+        # -- Without a linked recording, the analyzer is recordingless and its channels come from the container --
+        rec_attributes = None
+        if recording is None:
+            rec_attributes = _rec_attributes_from_container(container, nwbfile, sorting)
+
         # -- Build sparsity from stored mask --
         sparsity = None
         if container.sparsity_mask is not None:
-            channel_ids = recording.channel_ids if recording is not None else np.array(container.electrodes.data[:])
+            channel_ids = recording.channel_ids if recording is not None else rec_attributes["channel_ids"]
             sparsity = ChannelSparsity(
                 mask=np.array(container.sparsity_mask[:], dtype=bool),
                 unit_ids=sorting.unit_ids,
@@ -1145,13 +1180,22 @@ def read_sorting_analyzer_from_nwb(
             )
 
         # -- Create in-memory SortingAnalyzer --
-        sorting_analyzer = create_sorting_analyzer(
-            sorting=sorting,
-            recording=recording,
-            format="memory",
-            sparse=False,
-            sparsity=sparsity,
-        )
+        if recording is not None:
+            sorting_analyzer = create_sorting_analyzer(
+                sorting=sorting,
+                recording=recording,
+                format="memory",
+                sparse=False,
+                sparsity=sparsity,
+            )
+        else:
+            sorting_analyzer = SortingAnalyzer(
+                sorting=NumpySorting.from_sorting(sorting, with_metadata=True, copy_spike_vector=True),
+                recording=None,
+                rec_attributes=rec_attributes,
+                format="memory",
+                sparsity=sparsity,
+            )
 
         # -- Instantiate precomputed extensions --
         extensions = container.spike_sorting_extensions
@@ -1282,7 +1326,14 @@ def _load_waveforms(extensions, sorting_analyzer: "SortingAnalyzer") -> None:
 
     ext_class = get_extension_class("waveforms")
     ext = ext_class(sorting_analyzer)
-    ext.set_params()
+    # Set directly: spikeinterface's `set_params` reads the recording even when `dtype` is given, which a
+    # recordingless analyzer does not have. The window comes from the stored peak index, as for templates.
+    peak_sample_index = waveforms_nwb.peak_sample_index
+    ext.params = dict(
+        ms_before=float(peak_sample_index / sorting_analyzer.sampling_frequency * 1000.0),
+        ms_after=float((num_samples - peak_sample_index) / sorting_analyzer.sampling_frequency * 1000.0),
+        dtype=all_waveforms.dtype.str,
+    )
     ext.data["waveforms"] = all_waveforms
     ext.run_info = {"run_completed": True, "runtime_s": 0.0}
     sorting_analyzer.extensions["waveforms"] = ext
