@@ -1057,6 +1057,7 @@ def add_sorting_analyzer_to_nwbfile(
     container_kwargs = dict(
         name=container_name,
         sampling_frequency=sorting_analyzer.sampling_frequency,
+        num_samples=np.int64(sorting_analyzer.get_num_samples()),
         electrodes=electrodes_region,
         units_region=units_region,
         sparsity_mask=sparsity_mask,
@@ -1083,8 +1084,7 @@ def _rec_attributes_from_container(container, nwbfile, sorting) -> dict:
     """The ``rec_attributes`` of a recordingless analyzer, built from the container and the electrodes table.
 
     Channel ids come from the ``channel_name`` column (or the rows themselves), and the probe from
-    ``rel_x``/``rel_y`` when present. The traces' duration and dtype are not stored, so the recording is
-    taken to end at the last spike, in float32.
+    ``rel_x``/``rel_y`` when present.
     """
     from probeinterface import Probe, ProbeGroup
 
@@ -1105,8 +1105,7 @@ def _rec_attributes_from_container(container, nwbfile, sorting) -> dict:
         probegroup = ProbeGroup()
         probegroup.add_probe(probe)
 
-    spike_vector = sorting.to_spike_vector()
-    num_samples = int(spike_vector["sample_index"].max()) + 1 if len(spike_vector) > 0 else 0
+    num_samples = container.num_samples
     return dict(
         channel_ids=channel_ids,
         sampling_frequency=container.sampling_frequency,

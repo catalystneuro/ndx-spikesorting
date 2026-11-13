@@ -2,10 +2,16 @@
 
 # v0.1.2 (Upcoming)
 
+<<<<<<< HEAD
 ### Fixes
 
 * `read_sorting_analyzer_from_nwb` reads a container that links no `ElectricalSeries` (e.g. a file with only the sorting, or only LFP) as a recordingless `SortingAnalyzer`. Its channel ids, probe and sparsity come from the electrodes table and the container. The waveforms extension also gets its `ms_before`/`ms_after` from the stored peak index instead of the defaults.
 * `add_sorting_analyzer_to_nwbfile` links an `ElectricalSeries` only when `electrical_series_name` is given, and never picks one from the file. `electrical_series_name` is now the series' path in the file (e.g. `"acquisition/ElectricalSeries"` or `"processing/ecephys/LFP/ElectricalSeriesLFP"`); a bare name is still looked up in acquisition. It checks that the series covers the analyzer's electrodes and is sampled at its rate, which rules out e.g. an LFP series.
+=======
+### Features
+
+* `SpikeSortingContainer` has an optional `num_samples` attribute, the number of samples of the recording the analysis was computed on. `add_sorting_analyzer_to_nwbfile` writes it, so the recording duration is stored even when no `ElectricalSeries` is linked.
+>>>>>>> 8a3c41cfe2079e395a5901d54a860f00c581c6c5
 
 # v0.1.1
 
